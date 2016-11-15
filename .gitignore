@@ -1,0 +1,7 @@
+*.data
+*.strace
+*.strace.*
+\#*
+.\#*
+.Rhistory
+tmp.txt
