@@ -1,40 +1,14 @@
 library(ggplot2)
 library(cluster)
-
-## Optional
 library(shiny)
 
-# options("download.file.method" )
-
-read.matrix <- function(description) {
-    con <- file(description, "r")
-
-    dim <- scan(con, what = integer(), n = 2, comment.char = "#")
-    nrow  <- dim[1]
-    ncol  <- dim[2]
-
-    row.names <- scan(con, what = integer(), n = nrow, comment.char = "#")
-    col.names <- scan(con, what = integer(), n = ncol, comment.char = "#")
-
-    M <- matrix(scan(con, what = integer(), n = nrow * ncol, comment.char = "#"),
-                nrow = nrow, ncol = ncol, byrow = TRUE)
-
-    close(con)
-
-    ret <- list("rows" = row.names,
-                "cols" = col.names,
-                "matrix" = M
-                )
-    return(ret)
-}
-
+# Generic file data frame reader
 mmap.read <- function(description) {
     con    <- file(description, "r")
     data   <- read.table(con, header = TRUE, allowEscape = TRUE, stringsAsFactors = FALSE)
     close(con)
     return(data)
 }
-
 
 
 # R treats this as a double(52bit mantissa+exp)
@@ -53,13 +27,14 @@ mmap.sprint.page <- function(page) {
 }
 
 
-ncluster <- function(M) {
-    c   <- clusGap(M, kmeans, 8, B = 100) # Doc says 500 is good
+# Estimate the number of clusters.
+ncluster <- function(M, B=100) {
+    c   <- clusGap(M, kmeans, 8, B = B) # Doc says 500 is good
     ret <- maxSE( c$Tab[,3] , c$Tab[,4], SE.factor=1)
     return(ret)
 }
 
-
+# Add cluster numbers sorted according to the base address
 mmap.cluster <- function(mmap) {
 
     ps <- matrix(unique(sort(mmap$from)), ncol=1)
@@ -94,6 +69,7 @@ mmap.cluster <- function(mmap) {
 }
 
 
+# Compute the sizes of the clusters (i.e. max(cluster)-min(cluster)
 mmap.cluster.size <- function(mmap.cluster) {
     nc <- max(mmap.cluster$cluster)
     ret <- 1:nc
@@ -109,37 +85,28 @@ mmap.cluster.size <- function(mmap.cluster) {
 }
 
 
-mmap.loop <- function(graph) {
-    ## Doesn't work for ggplot
-    ## pos <- identify(graph)
-    ## cat(pos,"\n")
-}
-
+# Plot with cluster info
 myplot.cluster <- function(frame, labeller = "label_value") {
     g    <- myplot(frame)
     ret  <- g + facet_grid(cluster ~ . , scales="free_y", labeller = labeller)
     ret
-    mmap.loop(ret)
     return(ret)
 }
 
+# Plot without cluster info
 myplot <- function(frame) {
     g <- ggplot(frame, aes(x=t, y=from, xmin= t-0.5, xmax = t+0.5, ymin = from, ymax = to, fill=v)) +
         geom_rect()
 
     ret <- g +
-        scale_x_discrete() +
+        scale_x_continuous() +
             scale_y_continuous(labels = mmap.sprint.page) +
                 scale_fill_gradientn(colours = rainbow(7))
     return(ret)
 }
 
 
-test2 <- function() {
-    cat("test")
-    return(0)
-}
-
+# ggplot object without trace info
 mmap.plot <- function(file) {
     mmap      <- mmap.read(file)
     mmap.clus <- mmap.cluster(mmap)
@@ -160,58 +127,70 @@ find.trace <- function(g, t, p) {
     return(ts[1])
 }
 
-
-mmap.init <- function(matrix.file, trace.file) {
+# ggplot object with trace info
+mmap.plot.trace <- function(matrix.file, trace.file) {
     g       <- mmap.plot(matrix.file)
     g$trace <- mmap.read(trace.file)
     return(g)
 }
 
+# Use this if shiny is not available
 test <- function() {
-    g <- mmap.init("out.data","trace.data")
+    g <- mmap.plot.trace("out.data","trace.data")
     print(g$plot)
     return(g)
 }
 
 
 
-### Shiny server
+### A shiny server
 
 ui <- basicPage(
   plotOutput("plot1", click = "plot_click"),
   verbatimTextOutput("info")
 )
 
-server <- function(input, output) {
-    g <- mmap.init("out.data", "trace.data")
+server <- function(matrix.file, trace.file) {
 
-    output$plot1 <- renderPlot({
-        return(g$plot)
-    })
+    function(input, output) {
+        g <- mmap.plot.trace(matrix.file, trace.file)
 
-    output$info <- renderText({
-        t    <- input$plot_click$x
-        page <- input$plot_click$y
-        p    <- mmap.sprint.page(page)
-        trace <- find.trace(g,t,page)
-        cat("t=",t , "\np=", p, "\ntrace:\n", trace,"\n")
-        paste0("t=",t , "\np=", p, "\ntrace:", trace)
-    })
+        output$plot1 <- renderPlot({
+            return(g$plot)
+        })
+
+        output$info <- renderText({
+            t    <- input$plot_click$x
+            page <- input$plot_click$y
+            p    <- mmap.sprint.page(page)
+            trace <- find.trace(g,t,page)
+
+            # Print to stdout. Useful for scripting or in multi-monitor setup
+            cat("t=",t , "\np=", p, "\ntrace:\n", trace,"\n")
+
+            # Paste into the html
+            paste0("t=",t , "\np=", p, "\ntrace:", trace)
+        })
+    }
 }
 
 
-shiny <- function () {
-    shinyApp(ui, server)
+shiny <- function (matrix.file, trace.file) {
+    shinyApp(ui, server(matrix.file, trace.file))
 }
 
 
-#mmap <- read.mmap("out.data")
+## main
 
-len    <- 1000
-region <- 100
-mmap.test <- data.frame(
-    t    <- rep(1:len, each=region),
-    from <- rep(seq(from=0, by = 100, length.out= region), len),
-    to   <- rep(seq(from=0, by = 100, length.out= region), len) + 80,
-    v    <- runif(len*region)
-    )
+# Usage: command data_file_1 .. data_file_n trace_file_1 .. trace_file_n
+# @tbd: Add options for Monte Carlo simulations, etc.
+args = commandArgs(trailingOnly=TRUE)
+stopifnot(length(args) %% 2 == 0)
+
+n = length(args) %/% 2
+data.files  = args[1:n]
+trace.files = args[(n+1):length(args)]
+
+cat("data.files=",data.files,"\n")
+cat("trace.files=",trace.files,"\n")
+shiny(data.files[1],trace.files[1])

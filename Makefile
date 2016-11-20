@@ -2,93 +2,165 @@
 ## Mandatory configuration  ##
 ##############################
 
-# The command to trace the memory usage
-# For the moment, the command must only clone threads, not processes (i.e. fork)
-COMMAND ?= ls
+# The command to trace the memory usage.
+# Override it with make COMMAND="your command"
+# The whole process tree will be traced, and their outputs go to $(DATA_DIR) (see below).
+COMMAND = time ls
 
-# Download method for install.packages.
+# Download method for R's install.packages.
 # One of: internal|wget|curl|lynx
 # See ?download.file for details.
 # On my Ubuntu R was not linked to libcurl, so..
-R_DOWNLOAD_FILE_METHOD     = wget
+R_DOWNLOAD_FILE_METHOD  = wget
 
+# All outputs will go under this path.
+# Must be a non empty string ('.' should work)
+BUILD_DIR   = build
+
+# The path prefix for the actually generated data
+# This is not 'make clean'ed, use make dist-clean
+# try 'make DATA_DIR=existing_dir' to re-analyze existing data
+DATA_DIR_STEM  = $(BUILD_DIR)/data-
+
+# Careful not to include ':' in prerequisites.
+# Also note the strictness here
+TIMESTAMP := $(shell date  '+%F_%Hh%Mm%Ss')
+DATA_DIR  := $(DATA_DIR_STEM)$(TIMESTAMP)
 
 #####################################################
 ## Optional configuration                          ##
 ## Try changing the followings if something breaks ##
 #####################################################
 
-# If ggplot2 fails to install, comment out ggplot2 and try apt (or your package manager)
-R_PREREQUISITE             = shiny cluster ggplot2
+# These prerequisites are only a suggestion, I will not actually run them
 
-# Try apt-get if ggplot2 failed to install directly from CRAN
-APT_PREREQUISITE           = libpcre3-dev # r-cran-ggplot2 r-cran-cluster
+# ggplot2 failed to install on my Ubuntu
+R_PREREQUISITE             = shiny # cluster ggplot2
+
+# This is more likely to work
+APT_PREREQUISITE           = libunwind8-dev libpcre3-dev r-base r-cran-ggplot2 r-cran-cluster
 
 # You need libpcre3-dev above
 CABAL_PREREQUISITE         = split hashable IntervalMap pretty regex-pcre
 
 # The path and the options for strace binary
-# Note that the option '-k' may not be available for the strace from your distribution,
+# Note that the option '-k' may not be available from the strace of your distribution,
 # in which case you either need to compile it for yourself, or abandon the stack trace facility.
-STRACE                     = strace
-STRACEFLAGS                = -k -f -e trace=memory
-STRACE_OUTPUT              = strace.data
+# '-ff' cannot be used because it doesn't distinguish tid's and pid's..
+STRACE               = strace
+STRACEFLAGS          = -k -f -e trace=memory,process
+STRACE_DATA          = strace.data
 
 # The name of the Haskell binary
-STRACE_PARSER_BIN          = ./strace_parser
+STRACE_PARSER_BIN    = strace_parser
+GHC                  = ghc
+GHCFLAGS             = -O
 
-GHC                        = ghc
-GHCFLAGS                   = -O
+# Generated outputs by the parser
+FRAME_DATA           = frame.data
+TRACE_DATA           = trace.data
 
-DATA_FILE                  = out.data
-TRACE_FILE                 = trace.data
+# What gets cleaned
+CLEAN_FILES      = $(STRACE_PARSER_BIN)
+CLEAN_PATHS      = $(BUILD_DIR)
+DIST_CLEAN_FILES = $(DATA_DIR)/$(STRACE_DATA) $(DATA_DIR)/$(FRAME_DATA) $(DATA_DIR)/$(TRACE_DATA)
+DIST_CLEAN_PATHS = $(DATA_DIR)
 
 ##############################
 ## End of configuration     ##
 ##############################
 
-HASKELL_SOURCES  = Main.hs
-R_SOURCES        = mmap.R
+haskell_sources  = Main.hs
+r_script         = mmap.R
 
-R_INSTALL_PACKAGES_COMMAND = $(call r_install_packages, $(PREREQUISITE_R))
-r_install_packages         = install.packages(c( $(call quote, $(1)) ))
-quote                      = $(patsubst %, \"%\", $(1))
+r_install_packages_command = install.packages(c($(call r-str-vector, $(R_PREREQUISITE))))
 
-# Prerequisite.
-# Don't mess with the system directly, just show necessary prerequisite packages
+# Utility functions
+r-str-vector               = $(call join-with-comma, $(call map-quote, $(1)))
+join-with-comma            = $(subst $(space), $(comma),$(strip $(1)))
+map-quote                  = $(patsubst %, \"%\", $(1))
+space :=
+space +=
+comma := ,
 
-.PHONY: prerequisite prerequisite_r prerequisite_cabal prerequisite_apt prerequisite_strace
-prerequisite : prerequisite_r prerequisite_apt prerequisite_cabal prerequisite_strace
+
+##################
+## Recipes      ##
+##################
+all : show-prerequisites strace runR
+
+# Prepare paths
+$(BUILD_DIR) :
+	mkdir -p $@
+
+$(DATA_DIR) :
+	mkdir -p $@
+
+# Suggest (but not actually install) prerequisites.
+.PHONY: show-prerequisites prerequisite_r prerequisite_cabal prerequisite_apt prerequisite_strace
+show-prerequisites : prerequisite_r prerequisite_apt prerequisite_cabal prerequisite_strace
 prerequisite_r :
 	@echo Try running the following commands in a R session: ;\
-	@echo "options(\"download.file.method\" = \"$(R_DOWNLOAD_FILE_METHOD)\")" ;\
-	@echo "$(R_INSTALL_PACKAGES_COMMAND)"
+	 echo "> options(\"download.file.method\" = \"$(R_DOWNLOAD_FILE_METHOD)\")" ;\
+	 echo "> $(R_INSTALL_PACKAGES_COMMAND)"
 
 prerequisite_apt :
 	@echo Run your package manager like this: ;\
-	@echo sudo apt-get install $(APT_PREREQUISITE)
+	 echo "$$ sudo apt-get install $(APT_PREREQUISITE)"
 
 prerequisite_cabal :
 	@echo You need the following cabal packages: ;\
-	@echo cabal install $(CABAL_PREREQUISITE)
+	 echo "$$ cabal install $(CABAL_PREREQUISITE)"
 
 prerequisite_strace :
-	$(STRACE) -o /dev/null $(STRACEFLAGS) /bin/ls || \
-	( echo "$(STRACE) $(STRACEFLAGS) is not available." ;\
+	@$(STRACE) $(STRACEFLAGS) /bin/ls > /dev/null 2>&1 || \
+	( echo "$(STRACE) $(STRACEFLAGS) is not ok." ;\
 	  echo "Try running the following commands:" ;\
-	  echo "git clone https://github.com/strace/strace.git &&" ;\
-	  echo "cd strace && ./bootstrap && ./configure --prefix=\$HOME --with-libunwind &&" ;\
-	  echo "make && make install" ;\
+	  echo "$$ git clone https://github.com/strace/strace.git &&" ;\
+	  echo "   cd strace && ./bootstrap && ./configure --prefix=\$$HOME --with-libunwind &&" ;\
+	  echo "   make && make install" ;\
 	) || false
 
+
 # Haskell
-$(STRACE_PARSER_BIN) : $(HASKELL_SOURCES)
+$(BUILD_DIR)/$(STRACE_PARSER_BIN) : $(haskell_sources) | $(BUILD_DIR)
 	$(GHC) $(GHCFLAGS) -o $@ $^
 
-# Process data
+# Strace
+# A hack to deal with unpredictable generated files
+.PHONY : strace
+strace : $(DATA_DIR)/$(STRACE_DATA)
+$(DATA_DIR)/$(STRACE_DATA) : | $(DATA_DIR)
+	$(STRACE) -o $@ $(STRACEFLAGS) $(COMMAND)
 
-$(STRACE_FILE) :
-	$(STRACE) -o $@ $(STRACEOPT) $(COMMAND)
+# Generate data frames for R.
+.PHONY : parse
+parse : $(DATA_DIR)/$(FRAME_DATA) $(DATA_DIR)/$(TRACE_DATA)
+# A hackish way to track DAGs
+%/$(FRAME_DATA) %/$(TRACE_DATA): $(BUILD_DIR)/$(STRACE_PARSER_BIN) %/$(STRACE_DATA)
+	$^ --output=$*/$(FRAME_DATA) --trace=$*/$(TRACE_DATA)
 
-$(DATA_FILE) : $(STRACE_PARSER_BIN)
-	$(STRACE_PARSER_BIN) <
+# Run the Shiny server
+.PHONY: runR
+runR : $(r_script) $(DATA_DIR)/$(FRAME_DATA) $(DATA_DIR)/$(TRACE_DATA)
+	Rscript $^
+
+# Cleaners
+.PHONY : clean dist-clean dist-clean-1
+
+clean :
+	rm    $(CLEAN_FILES) ;\
+	rmdir $(CLEAN_PATHS) ;\
+	true
+
+dist-clean :
+	make -e dist-clean-1
+
+dist-clean-1 :
+	rm    $(DIST_CLEAN_FILES) ;\
+	rmdir $(DIST_CLEAN_PATHS) ;\
+	true
+
+# Dangerous
+purge :
+	rm -rf $(BUILD_DIR)
