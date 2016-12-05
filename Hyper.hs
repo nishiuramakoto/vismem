@@ -21,13 +21,15 @@ import Text.Printf
 A hack to make the tuple (a,b) really look like an 'open interval' yet cover
 any closed/half-open finite/infinite intervals in the standard real.
 For example:
+* (a,b)     == hyper_std (a,b)
 * [a,b]     == hyper_std (a-dx , b+dx)
 * (-inf, a] == hyper_std (-1/dx, a+dx)
 where hyper_std is the (continuous) projection onto the standard part.
 
-The intension is to use it to define Grothendieck (pre)topologies that can be described
-by finitary data. The canonical topologies are utterly incomputable and programmatically
-of no use.
+This is useful for e.g. defining coherent constructive Grothendieck topoi, see Sheaf.hs.
+
+@tbd: I think this should work for any first-order definable total ordering, not just
+      the numbers.
 
 -}
 
