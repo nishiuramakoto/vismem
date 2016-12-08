@@ -1,3 +1,4 @@
+-- |Rule of the game: never require fancy extensions
 module Pretty(
         Pretty(..),
         Hex,
@@ -25,7 +26,7 @@ import qualified Data.Map as Map
 import Text.PrettyPrint
 import Text.Printf
 
--- |Rule: never require fancy extensions
+
 class Pretty a where
         pp         :: a -> Doc
         pp         = pp_summary
@@ -50,6 +51,7 @@ pp_error = error . render
 instance Pretty Doc     where pp = id
 instance Pretty Int     where pp = text . show
 instance Pretty Integer where pp = text . show
+instance Pretty Bool    where pp = text . show
 
 instance (Pretty a, Pretty b) => Pretty(a,b) where
         pp         (a,b) = pp_tuple [pp         a, pp         b]
@@ -65,7 +67,9 @@ instance (Pretty a, Pretty b, Pretty c, Pretty d) => Pretty(a,b,c,d) where
 
 instance Pretty a => Pretty [a] where
         pp         = pp_list . map pp
-        pp_summary = pp_list . add_ellipsis . map pp_summary . take 10
+        pp_summary xs
+                | length xs < 10 = pp_list . map pp_summary $ xs
+                | otherwise      = pp_list . add_ellipsis . map pp_summary . take 10 $ xs
                      where add_ellipsis ps = ps ++ [text "..."]
 
 instance (Pretty k, Pretty v) => Pretty (Map k v) where
@@ -81,6 +85,18 @@ instance (Integral a, Show a) => Show   (Hex a) where
 
 instance (Integral a, Show a) => Pretty (Hex a)  where pp = text . show
 
+instance (Pretty a) => Pretty (Maybe a) where
+        pp (Just x) = text "Just" <+> pp x
+        pp Nothing  = text "Nothing"
+
+        pp_summary (Just x) = text "Just" <+> pp_summary x
+        pp_summary Nothing  = text "Nothing"
+
+        pp_brief (Just x) = text "Just" <+> pp_brief x
+        pp_brief Nothing  = text "Nothing"
+
+
+
 
 pp_list :: [Doc] -> Doc
 pp_list = brackets . cat . punctuate comma
@@ -88,10 +104,14 @@ pp_list = brackets . cat . punctuate comma
 pp_tuple :: [Doc] -> Doc
 pp_tuple = parens . cat . punctuate comma
 
-pp_data :: String -> [Doc] -> Doc
-pp_data constr body = text constr <+> braces (cat $ punctuate comma body)
+pp_data :: String -> [(String, Doc)] -> Doc
+pp_data constr body = text constr <+> braces (cat $ punctuate comma $ map field body)
+        where
+                field (name, doc) = text name <+> text "=" <+> doc
 
 pp_timestamp = integer
+
+
 
 
 -- Primitive polynomial support

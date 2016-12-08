@@ -5,3 +5,5 @@
 .\#*
 .Rhistory
 tmp.txt
+*.hi
+spec_Sheaf.hs

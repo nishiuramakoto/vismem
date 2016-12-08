@@ -1,40 +1,23 @@
-module Sheaf
-where
-import Pretty
-import Hyper
-import Invariant
-
-import Data.List
-
-import           Data.Map (Map, (!))
-import qualified Data.Map as Map
-import           Data.IntervalMap          (IntervalMap)
-import qualified Data.IntervalMap          as IntervalMap
-import           Data.IntervalMap.Interval (Interval)
-import qualified Data.IntervalMap.Interval as Interval
--- for pretty printing without ghc extension
-import qualified Data.IntervalMap.Generic.Strict as StrictIntervalMap
-
-{-
+{- |
 ************************************************************************
 *                                                                      *
 *        Sheaves
 *                                                                      *
 ************************************************************************
 
- One of the fascinating ideas in Math is the study of
- complicated algebraic/logical  structures under the light  of
+ One of the fascinating ideas in math is the study of
+ deep algebraic/logical  structures under the light  of
  human geometric/topological intuition.
 
  The goal of this library is exactly this; it tries to 'geometrize' data structures
- with the help of Grothendieck topologies.
+ (with the ultimate goal of 'geometric programming')  with the help of Topos Theory.
 
  We will try to unify and generalize Lists, Trees, Maps, Sets, IntervalMaps, Continuations, or
- any combination of them, etc.,etc.. in order to give them 'geometric studies'.
+ any combination of them, etc.,etc.. in order to give them geometric studies.
 
  If some data structure could be pictorized on paper, chances are that its 'geometry'
  may be modeled by a sheaf on a site with a (often coherent) computable
- description of its 'topology'.
+ description of its Grothendieck topology.
 
  Examples include the time series of Sets/Maps, Maps over decidable
  sets (whose algebra, i.e. the boolean lattice of decidable sets,
@@ -43,47 +26,42 @@ import qualified Data.IntervalMap.Generic.Strict as StrictIntervalMap
  of cource "the time series of trees of virtual address spaces" as in
  our example program.
 
- With sheaves it should be possible to model processes with shared memory,
- processes on NUMA systems, distributed systems, in a way that strongly reflects the
- programmer's natural geometrical/topological intuition.
+ With sheaves it will be possible to model processes with shared memory,
+ processes on NUMA systems, distributed systems possibly equipped with 'eventual consistency',
+ in a way that strongly reflects the  programmer's natural geometrical/topological intuition,
+ without sacrificing  algebraic/logical rigor.
 
- Sheaves also generalize monads (or any 'geometric theory'), but
+ Sheaves also generalize monads (or any 'geometric theory' -- see below), but
  probably not in Haskelly way (because categorical programming in Haskell
- often seems a bit cranky and unnatural.. but I really don't know.)
+ seems a bit cranky and unnatural.. but I really don't know.)
 
- As a start, in this library I will concentrate on constant sheaves on a
- constructive site.
+= A note about computing constant sheaves on a constructive site
 
-* How to compute constant sheaves on a constructive site
-
-The purpose of this note is to explain (to myself) how constant sheaves are
+The purpose of this note is to explain how constant sheaves are
 derived constructively from a computable description of a site.
-Please at least take a quick look at the section 5, because if the arguments there were wrong,
-the code given below would be too.
 
 Contents
 0. Notation
-1. An Example
+1. An Example of a Constructive Site
 2. Sheaves on a Site
 3. The Associated Sheaf Functor
 4. Constant Sheaves and Global Sections
 5. Construction of Constant Sheaves
 6. Examples of Constant Sheaves
 7. Sections of Constant Sheaves
-8. Geometric Morphisms between Constant Sheaves
-9. Geometric Theories on Constant Sheaves
+8. Geometric Morphisms between Constructive Grothendieck topoi
+9. Geometric Theories
 
 References:
 [1] S.MacLane, I.Moerdijk, Sheaves in Geometry and Logic
 [2] P.Johnstone, Sketches of an Elephant: A Topos theory Compendium
 
 
-* 0. Notation
+== 0. Notation
 
 Because relative sizes of unicode characters are not standardized,
-I will use ASCII characters almost exclusively where the correct
+I will use ASCII characters exclusively where the correct
 indentation matters.
-
 
 Sets          = the category of sets
 0             = the initial object
@@ -108,9 +86,9 @@ Haskell functions will be written in underscore_case. This has several advantage
    distinguished with constructive Haskell functions,
 2. The well-tested standard library functions are clearly distinguished
    with our under-tested ones,
-3. I like c and ocaml..
+3. It looks more like my favarite languages like C/Ocaml/Prolog/etc than, say,... Java.
 
-* 1. An Example
+== 1. An Example of a Constructive Site
 
 For utmost concreteness let us concentrate on a simplest possible case.
 
@@ -158,7 +136,7 @@ it agrees with the Grothendieck in the case of sheaves.
 Of course, it will be worth checking if some constructive 'topology' of your
 non-Grothendieck topos gives the same thing as the Lawvere-Tierney topology.
 
-* 2. Sheaves on (C,K)
+== 2. Sheaves on (C,K)
 
 A sheaf F (for French 'faisceau') on a site (C,K) is a contravariant functor C^op -> Sets such that
 for each covering family X = ΣX_i, the following diagram is an equalizer:
@@ -213,9 +191,7 @@ injection from the pushout P of (F(X1) <- F(X) -> F(X2)) to  F(X12):
 where P = (F(X1) + F(X2))/~
       (+) = coproduct
       (~) = equivalence relation defined by r1(x) ~ r2(x)
-      r1 :: F(X) -> F(X1)
       r1 = F(X1 -> X)
-      r2 :: F(X) -> F(X2)
       r2 = F(X2 -> X)
 
 
@@ -231,7 +207,7 @@ construct a sheaf where F(0) = {0,1,2}.
 Consequently, it's not always true that F(X) = ∏F(X_i) even if X_i are all disjoint
 (i.e. if all the fibered products are initial).
 
-* 3. The Associated Sheaf Functor
+== 3. The Associated Sheaf Functor
 
 Forgetting the equalizer, we get an inclusion from the category of
 sheaves into the category of presheaves, denoted as 'i'. It is known
@@ -286,14 +262,14 @@ Fortunately (or not), our site is simple enough that cohomology groups won't mat
 We just track, through sheaves, how local changes to a data structure propagate to the global state,
 and in any case things like overflows or vanishing of integrals won't happen.
 
-* 4. Constant Sheaves and Global Sections
+== 4. Constant Sheaves and Global Sections
 
 Let S be a set.
 The constant presheaf ΔS is the contravariant functor in Psh(C) s.t.
 ΔS(X) = S and ΔS(X->Y) = id for all X,Y in C.
 
 A constant sheaf (on a site (C,K)) is the sheafification a(ΔS) of
-a constant presheaf ΔS, and also denoted ΔS when no confusion will arise.
+a constant presheaf ΔS, and also denoted ΔS when no confusion would arise.
 
 Δ, considered as a functor from Sets to Sh(C,K), has a right adjoint Γ:
 
@@ -305,13 +281,13 @@ section functor. (Note that the presheaf Δ1 is already a sheaf.)
 The constant sheaves are actually our main data structure, so we shall calculate them explicitly.
 Intuitively, it should be obvious, it's a sheaf of 'locally constant' functions discussed below.
 
-* 5. Construction of Constant Sheaves
+== 5. Construction of Constant Sheaves
+
+The goal of this section is to give an explicit, constructive description of constant sheaves
+on arbitrary site.
 
 WARNING:
   Careful, this is my own. You'll find mistakes!
-  The biggest trouble is that 'disjoint sieves' don't (easily) make sense and
-  don't seem to be representable.
-
 
 Hereafter in this section, I write ΔS as the constant presheaf.
 
@@ -470,7 +446,7 @@ where [_] is the equivalence class, {_} is the matching family.
 
 TODO: explain matching families.
 
-* 6. Examples of Constant sheaves
+== 6. Examples of Constant sheaves
 
 A constant sheaf on a locally connected topological space is trivial:
 a(ΔS)(X) = ΠS where the product is over the connected components of X.
@@ -489,7 +465,7 @@ a(ΔS)(X) = colim(Hom(R,S))
 
           = the set of all step functions
 
-* 7. Sections of Constant Sheaves
+== 7. Sections of Constant Sheaves
 
 Hereafter ΔS will denote the constant sheaf again.
 
@@ -501,13 +477,32 @@ in Section 1., in a way that could facilitate further generalizations.
 
 objects  : finite unions of open intervals in A, including the empty set.
 morphisms: inclusion as sets.
-K(X) = the combinations of maximal disjoint intervals which cover X.
+K(X) = the combinations of maximal disjoint intervals which cover X (as a set).
 
 -}
 
--- | The base space
+module Sheaf
+where
+
+import Hyper
+import Invariant
+
+import Data.List
+
+import           Data.IntervalMap          (IntervalMap)
+import qualified Data.IntervalMap          as IntervalMap
+import           Data.IntervalMap.Interval (Interval)
+import qualified Data.IntervalMap.Interval as Interval
+
+import Test.Hspec
+import Test.QuickCheck
+import Test.HUnit
+
+-- | The base ring
 type A         = Hyper Integer
 
+data Singleton = Singleton -- ^ The terminal set (==1 in Sets)
+               deriving (Eq,Ord,Show)
 {-|
 Recall that a strong/effective/split generating family is a collection of objects {G_i} such that
 
@@ -522,22 +517,24 @@ Furthermore, the domain of e_X is actually isomorphic to a finite coproduct of t
 although it's neither noetherian nor compact.
 
 The trouble is that I can't recall a proper name for expressing such things..
-so let us just call them 'generators' (or maybe should we just call them 'generalized elements'?).
+so let us just call them 'generators', and the sections on them 'generating sections'.
 
 In the sequel, I will add the suffix '_at' to the name of an operation of a section
-that acts locally near the given generator, in order to emphasize that our generating family
-is considered as a collection of points.
+that acts locally near the given generator, in order to emphasize that the objects of our generating family
+is considered as generalized points.
 
--}
-
-{- |
-As noted above, it is essential that our generating family only contains open intervals.
+As noted above, it is essential that our generating family contains open intervals only.
 Otherwise its sections must necessarily include step functions with infinite number of jumps,
-in which case the representation of sections as the finite map of intervals would be insufficient.
+in which case the representation of sections as the finite map of intervals would not be sufficient.
 -}
 
-type OpenInterval = Interval A
-type Generator    = OpenInterval
+type Generator a    = OpenInterval a
+type OpenInterval a = Interval a
+
+
+
+-- For testing
+type GenA = Generator A
 
 -- induce algebras from the dst space
 induce0 :: (a -> b) -> (c) -> (c -> d) -> d
@@ -549,54 +546,118 @@ induce1 from f to = \x -> to (f (from x))
 induce2 :: (a -> b) -> (b -> b -> c) -> (c -> d) -> a -> a -> d
 induce2 from (*) to = \x y -> to (from x * from y)
 
-gen :: (A,A) -> Generator
+-- | Gives a generator
+gen :: HyperNum a => (a,a) -> Generator a
 gen (x,y) = Interval.OpenInterval x y
 
-from_gen :: Generator -> (A,A)
+-- For testing
+genA :: (A,A) -> GenA
+genA = gen
+
+-- | Lower bound of an open interval
+gen_lower_bound :: HyperNum a => Generator a -> a
+gen_lower_bound = fst . from_gen
+
+-- | Upper bound of an open interval
+gen_upper_bound :: HyperNum a => Generator a -> a
+gen_upper_bound = snd . from_gen
+
+
+-- | Converts a generator to a tuple (since it resembles like an open interval)
+from_gen :: HyperNum a => Generator a -> (a,a)
 from_gen (Interval.OpenInterval x y) = (x,y)
 
-gen_empty :: Generator
+
+-- | The initial object
+gen_empty :: HyperNum a => Generator a
 gen_empty = induce0
-            from_gen
+            id
             hyper_interval_empty
             gen
 
-gen_null  :: Generator -> Bool
+-- For testing
+g0 = gen_empty :: GenA
+
+-- spec_FUN is meant to serve as the specification and as the documentation of FUN, NOT as a test
+-- Real tests should be done elsewhere
+spec_gen_empty = it "specifies the initial object" $ do
+       g0 @=? gen (0,0)
+
+-- | Tests initiality
+gen_null  :: HyperNum a => Generator a -> Bool
 gen_null = induce1
            from_gen
            hyper_interval_null
            id
 
-gen_unions :: Generator -> Generator -> [Generator]
+spec_gen_null = it "tests the initiality of a generator" $ do
+        gen_null g0          @=? True
+        gen_null (gen (0,1) :: GenA) @=? False
+
+
+-- | Union (the coproduct) of two generators as a sorted list of generators (in asc order)
+gen_unions :: HyperNum a => Generator a -> Generator a -> [Generator a]
 gen_unions = induce2
              from_gen
              hyper_interval_union
-             (map gen)
+             (sort . map gen)
+
+spec_gen_unions = it "computes the union of two generators" $ do
+        gen_unions g0 g0     @=? []
+        gen_unions g0 (gen (1,2))   @=? [gen (1,2)]
+        gen_unions (genA (1,2)) (genA (2,3)) @=? [genA (1,2), genA (2,3) ]
+        gen_unions (genA (1,2)) (genA (2-dx,3)) @=? [genA (1,3)]
 
 -- partial, dangerous
-gen_union  :: Generator -> Generator -> Generator
+gen_union  :: HyperNum a => Generator a -> Generator a -> Generator a
 gen_union  = induce2
              from_gen
              hyper_interval_union
              (head . map gen)
 
-gen_intersection :: Generator -> Generator -> Generator
+spec_gen_union = it "partially computes the union of two intersecting generators" $ do
+        gen_union (genA (1,2+dx)) (genA (2,3)) @=? genA (1,3)
+        gen_union (genA (1,2))    (genA (0,1+dx)) @=? genA (0,2)
+
+-- | The fibered product x∩y over x‌/y/x∪y (all the same on our site)
+gen_intersection :: HyperNum a => Generator a -> Generator a -> Generator a
 gen_intersection = induce2
                    from_gen
                    hyper_interval_intersection
                    gen
 
-gen_disjoint :: Generator -> Generator -> Bool
+spec_gen_intersection = it "computes the fibered product x∩y over x∪y" $ do
+        gen_intersection (genA (1,2)) (genA (2,3))    `shouldSatisfy` gen_null
+        gen_intersection (genA (1,2)) (genA (2-dx,3)) @=? genA (2-dx,2)
+        flip gen_intersection (genA (1,2)) (genA (2-dx,3)) @=? genA (2-dx,2)
+
+-- | Are x and y disjoint? i.e. Is x/\y initial?
+gen_disjoint :: HyperNum a => Generator a -> Generator a -> Bool
 gen_disjoint = induce2
                from_gen
                hyper_interval_disjoint
                id
 
-gen_intersects :: Generator -> Generator -> Bool
+spec_gen_disjoint = it "tests whether two generators are disjoint" $ do
+        gen_disjoint g0 g0         @=? True
+        gen_disjoint (genA (1,2)) g0    @=? True
+        gen_disjoint (genA (1,2)) (genA (2,3))    @=? True
+        gen_disjoint (genA (1,2)) (genA (2-dx,3)) @=? False
+        flip gen_disjoint (genA (1,2)) (genA (2-dx,3)) @=? False
+
+-- | Do x y intersect? That is, is x/\y non-intial?
+gen_intersects :: HyperNum a => Generator a -> Generator a -> Bool
 gen_intersects = induce2
                  from_gen
                  hyper_interval_disjoint
                  not
+
+spec_gen_intersects = it "tests x∩y /= 0" $ do
+        gen_intersects g0 g0         @=? False
+        gen_intersects (genA (1,2)) g0    @=? False
+        gen_intersects (genA (1,2)) (genA (2,3))    @=? False
+        gen_intersects (genA (1,2)) (genA (2-dx,3)) @=? True
+        flip gen_intersects (genA (1,2)) (genA (2-dx,3)) @=? True
 
 
 {-|
@@ -606,7 +667,7 @@ Next we recall that
           R in KD(X)^op
 
 which is a set of equivalence classes represented by (f::R->s) for R
-a set of disjoint covers {c::U->X}. Since on our site a disjoint
+a disjoint covering {c::U->X}. Since on our site a disjoint
 covering can always be described by a finite set, it is natural to
 express the sections by some kind of finite maps.
 
@@ -619,31 +680,49 @@ on the base topology and on the type of the sheaf.
 -}
 
 -- @tbd: I could not find higher dimensional range trees in Hackage?? Will I have to do it?
-data Section s = Section
-                 { section_data     :: IntervalMap A s -- Open intervals only
+data Section a s = Section
+                 { section_data     :: IntervalMap a s -- ^ Open intervals only
                  }
                deriving (Show)
 
-section_to_asc_list :: Section s -> [(Generator, s)]
+-- | Change the representation to a sorted list of generating sections
+section_to_asc_list :: HyperNum a => Section a s -> [(Generator a, s)]
 section_to_asc_list (Section section_data) = IntervalMap.toAscList section_data
 
-section_from_list :: [(Generator, s)] -> Section s
-section_from_list gs = Section (IntervalMap.fromList gs)
+-- Change the representation to an interval map, doesn't check consistency
+section_from_list_unsafe :: HyperNum a => [(Generator a, s)] -> Section a s
+section_from_list_unsafe gs = Section (IntervalMap.fromList gs)
 
-section_domain_asc :: Section s -> [Generator]
+-- | The domain of a section, represented as a list of generators in asc order
+section_domain_asc :: HyperNum a => Section a s -> [Generator a]
 section_domain_asc = map fst . section_to_asc_list
 
--- | Glueing without checking
-section_glue_unsafe :: Section s -> Section s -> Section s
+-- Glueing without checking
+section_glue_unsafe :: HyperNum a => Section a s -> Section a s -> Section a s
 section_glue_unsafe s s' = Section $ IntervalMap.union (section_data s) (section_data s')
 
-section_null :: Section s -> Bool
+-- | Tests wheter it is the (unique) section on the initial object, i.e. F(0).
+--   Note that this is really a terminal object in the category of sections and restrictions..
+--   What would be the better name of this?
+section_null :: HyperNum a => Section a s -> Bool
 section_null s = IntervalMap.null $ section_data s
 
-section_empty :: Section s
+spec_section_null = it "tests x == F(0) " $ do
+        section_null s0  @=? True
+        section_null (section_singleton (genA (0,1),1))   @=? False
+
+-- | F(0), i.e. the unique section on the initial object
+section_empty :: HyperNum a => Section a s
 section_empty = Section (IntervalMap.empty)
 
-{- |
+-- To simplify testing
+s0 = section_empty :: Section A Int
+
+-- | The section on a single generator
+section_singleton :: HyperNum a => (Generator a, s) -> Section a s
+section_singleton (g,x) = Section $ IntervalMap.singleton g x
+
+{-
 The most basic building block for defining topological operations
 to ensure reasonable computational complexity (e.g. O((log n)^d) for a dimension d).
 Note that this itself is not a well-defined topological operation.
@@ -652,16 +731,18 @@ It splits the section into three parts: one below (in a sense) the generator,
 one intersecting the generator, and the other above the generator.
 The three may not necessarily be disjoint; so this doesn't topologically make sense.
 -}
-section_split_at_unsafe :: Generator -> Section s -> (Section s, Section s, Section s)
+section_split_at_unsafe :: HyperNum a
+                           => Generator a -> Section a s -> (Section a s, Section a s, Section a s)
 section_split_at_unsafe g (Section section_data) =
         let (below, s, above) =  IntervalMap.splitIntersecting section_data g
         in
                 (Section below, Section s, Section above)
 
 -- | Global validity, O(n)
-section_valid :: Eq s => Section s -> Bool
+--   Tests whether it is a section of the constant sheaf Δs
+section_valid :: (HyperNum a, Eq s) => Section a s -> Bool
 section_valid s =
-        let gss              = section_connected_components_gen s -- :: [[(Generator, s)]]
+        let gss              = section_to_asc_components_list s -- :: [[(Generator, s)]]
             coherent         = all open  $ map fst $ concat gss
             locally_constant = all const gss
         in
@@ -673,28 +754,53 @@ section_valid s =
                 unique []     = False
                 unique (x:xs) = all (==x) xs
 
+spec_section_valid = it "checks the global validity as a section of a constant sheaf" $ do
+        s0  `shouldSatisfy` section_valid
+        section_singleton (genA (0,1),1) `shouldSatisfy` section_valid
+        section_from_list_unsafe [(genA (0,1),1),(genA (1,2),1)] `shouldSatisfy` section_valid
+        section_from_list_unsafe [(genA (0,1),1),(genA (1-dx,2),1)] `shouldSatisfy` section_valid
+        section_from_list_unsafe [(genA (0,1),1),(genA (1-dx,2),2)] `shouldSatisfy` not . section_valid
+
 
 -- | Local validity, O(log n) at best
-section_valid_at :: Eq s => Generator -> Section s -> Bool
+section_valid_at :: (HyperNum a, Eq s) => Generator a -> Section a s -> Bool
 section_valid_at g s =
         let t = section_components_at g s
         in  section_valid t
 
 
-{- |
-Note that a section is actually an equivalence class,
-with s==s' iff  s and s' 'match' in the following sense:
+spec_section_valid_at = it "checks the local validity  as a section of a constant sheaf" $ do
+        let s = section_from_list_unsafe
+
+        let s1 = s [(genA (0,1),1),(genA (1,2),2)]
+
+        s1 `shouldSatisfy` section_valid_at (genA (0,dx))
+
+
+{- | O(n)
+     Note that a section is actually an equivalence class,
+     with s==s' iff  their canonical representations are equal.
 -}
 
-instance Eq s => Eq (Section s) where
+instance (HyperNum a, Eq s) => Eq (Section a s) where
         -- @tbd slow
         s == t = let ms = section_canonicalize s
                      mt = section_canonicalize t
                   in
                           section_data ms == section_data mt
 
+spec_section_eq = it "defines the equivalence relation for the representations of sections" $ do
+        let s = section_from_list_unsafe
 
-section_canonicalize :: Eq s => Section s -> Section s
+        s0 == s0 @=? True
+        s [(genA (0,1),0), (genA (1-dx,2),0)] @=? s [(genA (0,2),0)]
+
+
+{- |  O(n)
+      Canonicalize a section, i.e. transform to the most efficient representation
+      while preserving the equality of sections.
+-}
+section_canonicalize :: (HyperNum a, Eq s) => Section a s -> Section a s
 section_canonicalize s =
         with_invariant "section_canonicalize"
         precondition
@@ -705,31 +811,62 @@ section_canonicalize s =
                 precondition  = section_valid s
                 postcondition = section_valid
 
-                t  = section_from_list $ map union $ section_connected_components_gen s
+                t  = section_from_list_unsafe $ map union $ section_to_asc_components_list s
 
                 union gs = foldl1' (\/) gs
 
                 (s,x) \/ (t,y) | x == y    = (gen_union s t, x)
-                               | otherwise = error "impossible"
+                               | otherwise = error "inconsistent; this is not a section"
 
-{- |
+spec_section_canonicalize = it "transforms a section to the canonical form" $ do
+        let x @->? y =  section_data (section_canonicalize x) @=? section_data y
+        s0 @->? s0
+        section_singleton (genA (0,1),1) @->? section_singleton (genA (0,1),1)
+        section_from_list_unsafe [ (genA (0,1),1)
+                                 , (genA (1-dx,2),1)]     @->? section_singleton (genA (0,2),1)
+        section_from_list_unsafe [ (genA (0,1),1)
+                                 , (genA (0+dx,1-2*dx),1)
+                                 , (genA (1-3*dx,2),1)
+                                 ] @->? section_singleton (genA (0,2),1)
+
+
+{- * Operations on sections
 
 There are two kinds of operations on sections, one for the base
-topology  and the other being geometric theories (e.g. algebra) 'along the stalk'
+topology  and the other for applying geometric theories (e.g. algebras) 'along the stalk'
 that are stable under geometric morphisms.
-
-Topological operations include:
-1. manimulate or query connected components of a section
-2. restrict the domain of a section
-3. glue sections
-4. geometric morphisms (direct and inverse images)
 -}
 
--- Topological
+{- ** Geometric/Topological operations
 
--- | Returns the list of connected componenents, represented as a list of sections on generators
-section_connected_components_gen :: Section s -> [[(Generator, s)]]
-section_connected_components_gen s =
+Geometric/Topological operations include:
+1. dealing with connected components
+2. dense covering of the compliment
+3. restriction
+4. gluing
+5. geometric morphisms (direct and inverse images which are adjoint)
+6. Compute the area of the domain
+-}
+
+-- *** Connected Components
+
+-- | Are two sections disjoint?
+section_disjoint :: (HyperNum a , Eq s) => Section a s -> Section a s -> Bool
+section_disjoint s t = section_lift2 const s t == section_empty
+
+spec_section_disjoint =
+        it "tests whether two sections are disjoint" $ do
+                let s1 = section_singleton (genA (0,1),1)
+                    s2 = section_singleton (genA (1-dx,2),1)
+                    s3 = section_singleton (genA (2,3),1)
+
+                section_disjoint s1 s2 @=? False
+                section_disjoint s1 s3 @=? True
+
+
+-- | Returns the list of connected componenents, represented as a list of generating sections in asc order
+section_to_asc_components_list :: HyperNum a => Section a s -> [[(Generator a, s)]]
+section_to_asc_components_list s =
         case section_to_asc_list s of
         []         -> []
         ((g,x):gs) -> snd $ foldl' classify (g,[[(g,x)]]) gs
@@ -740,17 +877,29 @@ section_connected_components_gen s =
                         | otherwise          = (h     , [(h,y)]:gs:gss)
                 (\/) = gen_union
 
+
+spec_section_to_asc_components_list =
+        it "converts the representation as the list of connected components"  $ do
+                let cs = section_to_asc_components_list
+                    sc = section_from_list_unsafe
+                    has_len n xs = length xs == n
+
+                cs s0 @=? []
+                cs (sc [(genA (0,1),0), (genA (1,2),1)])    `shouldSatisfy` has_len 2
+                cs (sc [(genA (0,1),0), (genA (1-dx,2),1)]) `shouldSatisfy` has_len 1
+
+
 -- | Return the list of connected components
-section_connected_components :: Section s -> [Section s]
-section_connected_components s = map section_from_list $ section_connected_components_gen s
+section_connected_components :: HyperNum a => Section a s -> [Section a s]
+section_connected_components s = map section_from_list_unsafe $ section_to_asc_components_list s
 
 -- | Restrict the section to its connected components intersecting the given generator
 --   Note that there always exists an ordering of generators that respects connected components
---   even in higher dimensional cases (use Zorn's lemma).
-
-section_split_components_at :: Eq s => Generator -> Section s -> (Section s, Section s, Section s)
+--   even in very high dimensional, non-constructive cases (use Zorn's lemma).
+section_split_components_at :: (HyperNum a, Eq s)
+                               => Generator a -> Section a s -> (Section a s, Section a s, Section a s)
 section_split_components_at g s =
-        with_invariant "section_components"
+        with_invariant "section_split_components_at"
         precondition
         postcondition
         t
@@ -774,13 +923,100 @@ section_split_components_at g s =
 
                 (\/) = section_glue_unsafe
 
-section_components_at :: Eq s => Generator -> Section s -> Section s
+spec_section_split_components_at =
+        it "splits the connected components of a section into three parts" $ do
+                let split_at g gs = section_split_components_at g (sc gs)
+                    sc            = section_from_list_unsafe :: [(GenA,Int)] -> Section A Int
+                    eq x y        = section_data x @=? section_data y
+                    (x,y,z) @==? (a,b,c) = eq x (sc a) >> eq y (sc b) >> eq z (sc c)
+
+                let s0 = []
+                    s1 = [ (genA (0,1),0), (genA (1,2),1) ]
+
+
+                split_at (genA (0,1)) []       @==? ([],[],[])
+                split_at (genA (1-dx,1+dx)) s1 @==? ([], s1, [])
+                split_at (genA (-2,-1)) s1     @==? ([], [], s1)
+                split_at (genA (2,3))   s1     @==? (s1, [], [])
+                split_at (genA (0,1))   s1     @==? ([], [(genA (0,1),0)], [(genA (1,2),1)])
+                split_at (genA (1,2))   s1     @==? ([(genA (0,1),0)], [(genA (1,2),1)], [])
+                split_at (genA (0,dx))  s1     @==? ([], [(genA (0,1),0)], [(genA (1,2),1)])
+
+
+-- | Get the connected components at the generator
+section_components_at :: (HyperNum a, Eq s) => Generator a -> Section a s -> Section a s
 section_components_at g s =
-        let (below, local, above) = section_split_components_at g local
+        let (below, local, above) = section_split_components_at g s
         in local
 
+spec_section_components_at =
+        it "returns the connected components at the generator" $ do
+                let s  = section_from_list_unsafe
+                let s1 = s [(genA (0,1),0), (genA (1-dx,2),0), (genA (2,3),1)]
+                section_components_at (genA (2-dx,2+dx)) s1 @=? s1
 
-gen_restrict_at :: Generator -> [(Generator, s)] -> [(Generator, s)]
+{- *** A dense covering of the compliment
+
+For any object U in C, the coproduct ∐V    does not exist.
+                                    V∩U=0
+
+However we can 'create the colimit' by considering the stream of growing large-enough
+objects that are disjoint to U:
+
+Uᶜ° = [V0,V1,..| Vi∩U == 0, closure(std(Vi∪U)) == std(A), Vi -> V(i+1)]
+s.t. if W∩U == 0 then there is some i such that W -> Vi.
+
+(Here std is the continuous projection onto the standard part of the hyperreal ring A)
+
+-}
+
+-- | [O(n),O(1),O(1),..]
+--   The first element is already 'large enough' that it densely covers the standard part of the complement.
+--   Note that this is not so trivial and costly in higher dimensional cases.. what to do?
+section_compliments :: HyperNum a => Section a s -> [Section a Singleton]
+section_compliments s = map (section_from_list_unsafe . cover boundaries) [1..]
+        where
+                boundaries = section_boundary_points_asc s -- even
+
+                cover [] n = [(gen (-inf^n,inf^n), Singleton)]
+                cover bs n = let b0 = head bs
+                                 bn = head (reverse bs)
+                                 cs = [(-inf^n+b0)] ++ bs ++ [(bn+inf^n)] -- even
+                                 gs = filter (not . gen_null) $ map gen $ take_odd $ pair cs
+                             in
+                                     zip gs (repeat Singleton)
+
+                pair xs = zip xs (tail xs)
+                take_odd [x]      = [x]
+                take_odd (x:y:xs) = x:take_odd xs
+
+spec_section_compliments =
+        it "computes the ascending chain of large-ish compliments" $ do
+                let s  = section_from_list_unsafe
+                    cs = section_compliments
+                    z  = Singleton
+
+                let s1 =  s [(genA (0,1),0),(genA (2,3),1)]
+                    s2 =  s [(genA (0,1),0),(genA (1,3),1)]
+
+                head (cs s1) @=? s [(genA (-inf,0),z),(genA (1,2),z),(genA (3,3+inf),z)]
+                head (cs s2) @=? s [(genA (-inf,0),z),(genA (3,3+inf),z)]
+
+gen_compliments :: HyperNum a => Generator a -> [Section a Singleton]
+gen_compliments g = section_compliments $ section_singleton (g,Singleton)
+
+
+-- Only meaningful for 1-dim
+section_boundary_points_asc :: HyperNum a => Section a s -> [a]
+section_boundary_points_asc s = concat $ map to_list $ section_domain_asc s
+        where
+                to_list g = let (x,y) = from_gen g
+                            in  [x,y]
+
+-- *** Restriction
+
+-- Restrict the generating sections to given generator
+gen_restrict_at :: HyperNum a => Generator a -> [(Generator a, s)] -> [(Generator a, s)]
 gen_restrict_at g gs = concat $ map (restrict g) gs
         where
                 restrict g (s,x)
@@ -789,7 +1025,16 @@ gen_restrict_at g gs = concat $ map (restrict g) gs
 
                 (/\) = gen_intersection
 
-gen_restrict_at_consistently :: Eq s => Generator -> s -> [(Generator, s)] -> Maybe [(Generator, s)]
+spec_gen_restrict_at =
+        it "restricts generating sections to a generator" $ do
+                let r = gen_restrict_at
+
+                r (genA (0,1)) [(genA (-1,2),1)] @=? [(genA (0,1),1)]
+                r (genA (0,1)) [(genA (1 ,2),1)] @=? []
+
+-- Restrict the generating sections to the given generating section
+gen_restrict_at_consistently :: (HyperNum a, Eq s)
+                                => Generator a -> s -> [(Generator a, s)] -> Maybe [(Generator a, s)]
 gen_restrict_at_consistently g y gs = concat_maybes $ map (restrict g) gs
         where
                 restrict g (s,x)
@@ -805,21 +1050,47 @@ gen_restrict_at_consistently g y gs = concat_maybes $ map (restrict g) gs
 
                 (/\) = gen_intersection
 
+spec_gen_restrict_at_consistently =
+        it "restricts generating sections to the given generating section" $ do
+                let r = gen_restrict_at_consistently
 
-section_restrict_at :: Eq s => Generator -> Section s -> Section s
+                r (genA (0,1)) 1 [(genA (-1,2),1)] @=? Just [(genA (0,1),1)]
+                r (genA (0,1)) 2 [(genA (-1,2),1)] @=? Nothing
+                r (genA (0,1)) 1 [(genA (1 ,2),1)] @=? Just []
+
+
+-- | O(log n) at best
+--   Restrict section s to generator g
+section_restrict_at :: (HyperNum a, Eq s)
+                       => Generator a -> Section a s -> Section a s
 section_restrict_at g s =
         with_invariant "section_restrict_at"
         precondition
         postcondition
-        s'
+        t
         where
                 precondition  = not (gen_null g) && section_valid s
                 postcondition = section_valid
 
                 (below, local, above) = section_split_at_unsafe g s
-                s'                    = section_from_list $ gen_restrict_at g $ section_to_asc_list local
 
-section_restrict_at_consistently :: Eq s => Generator -> s -> Section s -> Maybe (Section s)
+                t   = section_from_list_unsafe $ gen_restrict_at g $ section_to_asc_list local
+
+spec_section_restrict_at =
+        it "restricts a section to the given generator" $ do
+                let r = section_restrict_at
+                    s = section_from_list_unsafe
+
+                let s1 = s [(genA (0,1),0), (genA (1,2),1), (genA (2,3),2)]
+
+                r (genA (-dx,0))  s1 @=? s0
+                r (genA (-dx,dx)) s1 @=? s [(genA (0,dx), 0)]
+                r (genA (1-dx,3-dx)) s1 @=? s [(genA (1-dx,1),0), (genA (1,2),1), (genA (2,3-dx),2)]
+
+-- | O(log n) at best
+--   Restrict a section to a generating section; returns 'Nothing' if it cannot be done in consistent way.
+section_restrict_at_consistently :: (HyperNum a, Eq s)
+                                    => Generator a -> s -> Section a s -> Maybe (Section a s)
 section_restrict_at_consistently g x s =
         with_invariant "section_restrict_at_consistently"
         precondition
@@ -832,12 +1103,26 @@ section_restrict_at_consistently g x s =
 
                 (below, local, above) = section_split_at_unsafe g s
 
-                t   = fmap section_from_list           $
+                t   = fmap section_from_list_unsafe           $
                       gen_restrict_at_consistently g x $
                       section_to_asc_list local
 
+spec_section_restrict_at_consistently =
+        it "restricts a section to the given generating section " $ do
+                let r = section_restrict_at_consistently
+                    s = section_from_list_unsafe
 
-section_restrict :: Eq s => Section s -> Section s -> Maybe (Section s)
+                let s1 = s [(genA (0,1),0), (genA (1,2),1), (genA (2,3),2)]
+
+                r (genA (-dx,0)) 0  s1 @=? Just s0
+                r (genA (-dx,dx)) 0 s1 @=? Just (s [(genA (0,dx), 0)])
+                r (genA (1-dx,3-dx)) 0 s1 @=? Nothing
+
+
+-- | O(n*log m) at best (should be optimized)
+--   Restrict a section to another section, returning Nothing on failure.
+section_restrict :: (HyperNum a, Eq s)
+                    => Section a s -> Section a s -> Maybe (Section a s)
 section_restrict s t = -- @tbd the choose larger section for efficiency
         with_invariant "section_restrict"
         precondition
@@ -858,18 +1143,49 @@ section_restrict s t = -- @tbd the choose larger section for efficiency
 
                 restrict s (g,x) = section_restrict_at_consistently g x s
 
+spec_section_restrict =
+        it "restricts a section to a section" $ do
+                let r = section_restrict
+                    s = section_from_list_unsafe
 
--- | Gluing
+                let s1 = s [(genA (0,1),0), (genA (1,2),0), (genA (2,3),2)]
+                r s1 s0 @=? Just s0
+                r s1 (s [(genA (-inf,0),0)]) @=? Just s0
+                r s1 (s [(genA (-inf,dx),1)]) @=? Nothing
 
-gen_glue :: Eq s => (Generator, s) -> (Generator, s) ->  Maybe (Section s)
+                r s1 (s [(genA (1-dx,1+dx),0),
+                         (genA (3-dx,inf),2)]) @=? Just (s [(genA (1-dx,1),0)
+                                                          ,(genA (1,1+dx),0)
+                                                          ,(genA (3-dx,3),2)
+                                                          ])
+
+
+-- *** Gluing
+
+-- | Glue two generating sections
+--   The result is undefined if either of the arguments is a section on the initial object
+--   (because Δs(0) == 1 and s is considered different to 1 no matter what s is)
+gen_glue :: (HyperNum a, Eq s)
+            => (Generator a, s) -> (Generator a, s) ->  Maybe (Section a s)
 gen_glue (g,x) (h, y)
-        |  gen_disjoint g h = Just $ section_from_list [(g,x),(h,y)]
-        |  x == y           = Just $ section_from_list [(g\/h,x)]
+        |  gen_disjoint g h = Just $ section_from_list_unsafe [(g,x),(h,y)]
+        |  x == y           = Just $ section_from_list_unsafe [(g\/h,x)]
         |  x /= y           = Nothing
 
         where (\/) = gen_union
 
-section_glue_at :: Eq s => Generator -> s -> Section s -> Maybe (Section s)
+spec_gen_glue =
+        it "glues two generating sections together" $ do
+                let s = section_from_list_unsafe
+                gen_glue (genA (0,1), 0) (genA (1-dx,2),1) @=? Nothing
+                gen_glue (genA (0,1), 0) (genA (1-dx,2),0) @=? Just (s [(genA (0,2), 0)])
+                gen_glue (genA (0,1), 0) (genA (1   ,2),1) @=? Just (s [(genA (0,1), 0), (genA (1,2),1)])
+
+
+-- | O(log n) at best
+--  Glue a section with a generating section
+section_glue_at :: (HyperNum a, Eq s)
+                   => Generator a -> s -> Section a s -> Maybe (Section a s)
 section_glue_at g x s =
         with_invariant "section_glue_at"
         precondition
@@ -886,7 +1202,7 @@ section_glue_at g x s =
                 mlocal = fmap section_canonicalize        $
                          foldl' (\/) (Just section_empty) $
                          map (gen_glue (g,x))             $
-                         section_to_asc_list local
+                         (g,x):section_to_asc_list local
 
                 ms = case mlocal of
                         Nothing -> Nothing
@@ -896,8 +1212,20 @@ section_glue_at g x s =
                 Nothing  \/ _       = Nothing
                 (Just x) \/ (Just y) = Just (section_glue_unsafe x y)
 
+spec_section_glue_at =
+        it "glues a section with a generating section" $ do
+                let s = section_from_list_unsafe
 
-section_glue :: Eq s => Section s -> Section s -> Maybe (Section s)
+                let s1 = s [(genA (0,1), 0), (genA (2,3), 0)]
+                section_glue_at (genA (-dx,dx)) 1 s0 @=? Just (s [(genA (-dx,dx),1)])
+                section_glue_at (genA (-dx,dx)) 1 s1 @=? Nothing
+                section_glue_at (genA (-dx,dx)) 0 s1 @=? Just (s [(genA (-dx,1),0),(genA (2,3),0)])
+                section_glue_at (genA (1-dx,2+dx)) 0 s1 @=? Just (s [(genA (0,3),0)])
+
+-- | O(n*log m) at best, should be optimized
+--   Glue two sections together
+section_glue :: (HyperNum a, Eq s)
+                => Section a s -> Section a s -> Maybe (Section a s)
 section_glue s t =
         with_invariant "section_glue"
         precondition
@@ -914,17 +1242,74 @@ section_glue s t =
                 Nothing  \/ _     = Nothing
                 (Just s) \/ (g,x) = section_glue_at g x s
 
--- @tbd geometric (auto)morphisms
+spec_section_glue =
+        it "glues two sections together" $ do
+                let s = section_from_list_unsafe
 
-{- |
-Algebraic operations.
-Any geometric theory on s will naturally carry over to 'Section s'.
-(i.e. stable under geometric morphisms)
+                let s1 = s [(genA (0,1), 0), (genA (2,3), 1)]
+                    s2 = s [(genA (-dx,dx),0), (genA (2,3+dx),1)]
+                    s3 = s [(genA (-dx,dx),0), (genA (1-dx,2+dx), 1), (genA (2,3+dx),1)]
+
+                section_glue s1 s0 @=? Just s1
+                section_glue s1 s2 @=? Just (s [(genA (-dx,1),0),(genA (2,3+dx),1)])
+                section_glue s1 s3 @=? Nothing
+
+
+-- *** Geometric Morphisms
+
+-- **** Continuous group actions on the base space
+
+instance (HyperNum a, HyperSet a) => HyperSet (Interval a) where
+        hyper_act_left x iv = gen $ hyper_act_left x (from_gen iv)
+
+
+-- | Compute the direct image of the continuous group action (+x)*
+section_translate :: (HyperNum a, HyperSet a)
+                     => Hyper Integer -> Section a s -> Section a s
+section_translate x s = section_from_list_unsafe $ map (translate x) $ section_to_asc_list s
+        where
+                translate x (g,s) = (hyper_act_left x g, s)
+
+
+spec_section_translate =
+        it "compute the direct image under the continuous action (+x)*" $ do
+                let s  = section_from_list_unsafe
+                    s *> x = section_translate x s
+
+                let s1 = s [(genA(0,1),0),(genA(2,3),1)]
+
+                s1 *> 10 @=? s [(genA(10,11),0),(genA(12,13),1)]
+
+-- *** Geometry of the sections
+
+-- | Area of a generator
+gen_area :: HyperNum a => Generator a -> a
+gen_area g = gen_upper_bound g - gen_lower_bound g
+
+-- | Area of a section
+section_area :: (HyperNum a) => Section a s -> a
+section_area s = foldl' (+) 0 $ map gen_area $ section_domain_asc s
+
+spec_section_area =
+        it "computes the area of a section" $ do
+                let s = section_from_list_unsafe
+
+                section_area (s [(genA(0,1),0),(genA(2,4),1)]) @=? 3
+
+{- ** Algebraic operations
+
+The theory to be lifted should be geometric in the sense given at Note,
+so that they are stable under geometric morphisms.
+For example, it should not rely on a property expressed by an infinite number of
+conjunctions.
+
 -}
 
 
 -- | Unary operation. O(n)
-section_lift1_partial :: Eq s => (s -> Maybe t) -> Section s -> Section t
+--   'Nothing' specifies that the corresponding domains should be deleted.
+section_lift1_partial :: (HyperNum a, Eq s)
+                         => (s -> Maybe t) -> Section a s -> Section a t
 section_lift1_partial f s  =
         with_invariant "section_lift1_partial"
         precondition
@@ -937,14 +1322,29 @@ section_lift1_partial f s  =
 
                 t = Section $ IntervalMap.mapMaybe f $ section_data s
 
+spec_section_lift1_partial =
+        it "lifts a geometric theory on s to a 'Section s'" $ do
+                let lift = section_lift1_partial
+                    s    = section_from_list_unsafe
 
-section_lift1 :: Eq s => (s -> t) -> Section s -> Section t
+                let s1 = s [(genA (0,1), 0), (genA (2,3), 1)]
+                    f x  | x == 0    = Nothing
+                         | otherwise = Just (x+1)
+
+                lift f s0 @=? s0
+                lift f s1 @=? s [(genA (2,3),2)]
+
+-- | O(n)
+--   Unary operation.
+section_lift1 :: (HyperNum a, Eq s)
+                 => (s -> t) -> Section a s -> Section a t
 section_lift1 f s  = section_lift1_partial f' s
         where f' x = Just (f x)
 
--- | Binary operation. O(n+m)
---   @tbd much much room left for optimization
-section_lift2_partial :: (Eq s, Eq t, Eq u) => (s -> t -> Maybe u) -> Section s -> Section t -> Section u
+-- | O(n*log m) @tbd much much room left for optimization
+--   Binary operation.
+section_lift2_partial :: (HyperNum a, Eq s, Eq t, Eq u)
+                         => (s -> t -> Maybe u) -> Section a s -> Section a t -> Section a u
 section_lift2_partial (*) s t =
         with_invariant "section_lift2_partial"
         precondition
@@ -954,7 +1354,7 @@ section_lift2_partial (*) s t =
                 precondition      = section_valid s && section_valid t
                 postcondition u   = section_valid u
 
-                u = section_from_list $
+                u = section_from_list_unsafe $
                     concat            $
                     map (apply (*))   $
                     map (s /\)        $
@@ -972,6 +1372,21 @@ section_lift2_partial (*) s t =
                                in concat $ map process gs
 
 
-section_lift2 :: (Eq s, Eq t, Eq u) => (s -> t -> u) -> Section s -> Section t -> Section u
+spec_section_lift2_partial =
+        it "lifts a (geometric) binary operation to constant sheaves " $ do
+                let lift2 = section_lift2_partial
+                    s     = section_from_list_unsafe
+
+                let s1 = s [(genA (0,1), 0), (genA (2,3), 1)] :: Section A Int
+                    s2 = s [(genA (-inf,dx),10),(genA (1-dx,2+dx),20)] :: Section A Int
+                    f x 10 = Nothing
+                    f x y  = Just (x+ y)
+
+                lift2 f s1 s2 @=? s [(genA (1-dx,1),20), (genA (2,2+dx),21)]
+
+
+-- | Lift a binary operation
+section_lift2 :: (HyperNum a, Eq s, Eq t, Eq u)
+                 => (s -> t -> u) -> Section a s -> Section a t -> Section a u
 section_lift2 (*) s t = section_lift2_partial (**) s t
         where x ** y = Just (x*y)

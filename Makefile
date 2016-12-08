@@ -61,7 +61,7 @@ FRAME_DATA           = frame.data
 TRACE_DATA           = trace.data
 
 # What gets cleaned
-CLEAN_FILES      = $(STRACE_PARSER_BIN)
+CLEAN_FILES      = $(STRACE_PARSER_BIN) spec_Sheaf.hs
 CLEAN_PATHS      = $(BUILD_DIR)
 DIST_CLEAN_FILES = $(DATA_DIR)/$(STRACE_DATA) $(DATA_DIR)/$(FRAME_DATA) $(DATA_DIR)/$(TRACE_DATA)
 DIST_CLEAN_PATHS = $(DATA_DIR)
@@ -70,7 +70,7 @@ DIST_CLEAN_PATHS = $(DATA_DIR)
 ## End of configuration     ##
 ##############################
 
-haskell_sources  = Main.hs
+haskell_sources  = Main.hs Hyper.hs Invariant.hs Pretty.hs PrettySheaf.hs Sheaf.hs
 r_script         = mmap.R
 
 r_install_packages_command = install.packages(c($(call r-str-vector, $(R_PREREQUISITE))))
@@ -125,6 +125,13 @@ prerequisite_strace :
 # Haskell
 $(BUILD_DIR)/$(STRACE_PARSER_BIN) : $(haskell_sources) | $(BUILD_DIR)
 	$(GHC) $(GHCFLAGS) -o $@ $^
+
+spec_%.hs : %.hs
+	perl spec.pl $< > $@
+
+.PHONY : spec
+spec : spec_Sheaf.hs
+	runghc $<
 
 # Strace
 # A hack to deal with unpredictable generated files

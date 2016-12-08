@@ -1,5 +1,6 @@
 module Invariant(
         trace,
+        assert',
         with_invariant
         )
        where
