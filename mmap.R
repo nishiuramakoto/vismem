@@ -3,9 +3,13 @@ library(cluster)
 library(shiny)
 
 # Generic file data frame reader
-mmap.read <- function(description) {
+mmap.read <- function(description, nrows=-1) {
     con    <- file(description, "r")
-    data   <- read.table(con, header = TRUE, allowEscape = TRUE, stringsAsFactors = FALSE)
+    data   <- read.table(con,
+                         header = TRUE,
+                         allowEscape = TRUE,
+                         stringsAsFactors = FALSE,
+                         nrows=nrows)
     close(con)
     return(data)
 }
@@ -67,15 +71,13 @@ disjoint.intervals <- function(mmap) {
 
     }
 
-    disivs <- disivs[1:j,]
+    disivs <- matrix(disivs[1:j,],ncol=2)
     return(disivs)
 }
 
 # Add cluster numbers sorted according to the base address
 mmap.cluster <- function(mmap, B=100) {
     ivs <- disjoint.intervals(mmap)
-
-    #ps <- matrix(unique(sort(mmap$from)), ncol=1)
     ps  <- matrix(sort(as.vector(ivs[,1])), ncol=1)
     nc  <- ncluster(ps, B=B)
     fit <- kmeans(ps, nc)
@@ -156,8 +158,10 @@ mmap.plot <- function(file, B=100) {
         curmap    <- mmap[mmap$pid == pid,]
         clus      <- mmap.cluster(curmap, B=B)
         sizes     <- mmap.cluster.size(clus)
-        cat("sizes:",sizes/265)
-        print(pid)
+
+        print(sprintf("cluster_sizes(pid=%d):",pid))
+        cat(sizes/265)
+
         labeller  <- label.cluster(pid,sizes)
         g         <- myplot.cluster(clus, labeller = labeller)
 

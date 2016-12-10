@@ -54,14 +54,17 @@ STRACE_DATA          = strace.data
 # The name of the Haskell binary
 STRACE_PARSER_BIN    = strace_parser
 GHC                  = ghc
-GHCFLAGS             = -O
+GHCFLAGS             = -O # -DNDEBUG
+GHCFLAGS_PROF        = -prof -fprof-auto
+GHC_RTS              = +RTS -P -hc -RTS
+
 
 # Generated outputs by the parser
 FRAME_DATA           = frame.data
 TRACE_DATA           = trace.data
 
 # What gets cleaned
-CLEAN_FILES      = $(STRACE_PARSER_BIN) spec_Sheaf.hs
+CLEAN_FILES      = $(STRACE_PARSER_BIN) spec_Sheaf.hs spec_Hyper.hs
 CLEAN_PATHS      = $(BUILD_DIR)
 DIST_CLEAN_FILES = $(DATA_DIR)/$(STRACE_DATA) $(DATA_DIR)/$(FRAME_DATA) $(DATA_DIR)/$(TRACE_DATA)
 DIST_CLEAN_PATHS = $(DATA_DIR)
@@ -71,6 +74,7 @@ DIST_CLEAN_PATHS = $(DATA_DIR)
 ##############################
 
 haskell_sources  = Main.hs Hyper.hs Invariant.hs Pretty.hs PrettySheaf.hs Sheaf.hs
+haskell_spec     = spec_Sheaf.hs spec_Hyper.hs
 r_script         = mmap.R
 
 r_install_packages_command = install.packages(c($(call r-str-vector, $(R_PREREQUISITE))))
@@ -126,26 +130,52 @@ prerequisite_strace :
 $(BUILD_DIR)/$(STRACE_PARSER_BIN) : $(haskell_sources) | $(BUILD_DIR)
 	$(GHC) $(GHCFLAGS) -o $@ $^
 
+$(BUILD_DIR)/$(STRACE_PARSER_BIN)_prof : $(haskell_sources) | $(BUILD_DIR)
+	$(GHC) $(GHCFLAGS) $(GHCFLAGS_PROF) -o $@ $^
+
 spec_%.hs : %.hs
 	perl spec.pl $< > $@
 
 .PHONY : spec
-spec : spec_Sheaf.hs
-	runghc $<
+spec : $(haskell_spec)
+	for x in $^; \
+	do \
+		runghc $$x ; \
+	done
 
 # Strace
 # A hack to deal with unpredictable generated files
 .PHONY : strace
 strace : $(DATA_DIR)/$(STRACE_DATA)
 $(DATA_DIR)/$(STRACE_DATA) : | $(DATA_DIR)
-	$(STRACE) -o $@ $(STRACEFLAGS) $(COMMAND)
+	$(STRACE) -o $@ $(STRACEFLAGS) $(COMMAND) || test -r $@ # Proceed even in errors
 
 # Generate data frames for R.
 .PHONY : parse
 parse : $(DATA_DIR)/$(FRAME_DATA) $(DATA_DIR)/$(TRACE_DATA)
-# A hackish way to track DAGs
+
+## A hackish way to track DAGs
 %/$(FRAME_DATA) %/$(TRACE_DATA): $(BUILD_DIR)/$(STRACE_PARSER_BIN) %/$(STRACE_DATA)
 	$^ --output=$*/$(FRAME_DATA) --trace=$*/$(TRACE_DATA)
+
+# Profiling
+
+.PHONY : prof
+prof : $(STRACE_PARSER_BIN)_prof.prof view
+%.prof %.hp: $(BUILD_DIR)/% $(DATA_DIR)/$(STRACE_DATA) Makefile
+	$< $(DATA_DIR)/$(STRACE_DATA) \
+		 --output=$(DATA_DIR)/$(FRAME_DATA) \
+		 --trace=$(DATA_DIR)/$(TRACE_DATA) \
+		 $(GHC_RTS)
+
+.PHONY : view
+view : $(STRACE_PARSER_BIN)_prof.svg
+	display $<
+
+%.svg : %.hp
+	hp2pretty $<
+
+
 
 # Run the Shiny server
 .PHONY: runR
@@ -156,7 +186,7 @@ runR : $(r_script) $(DATA_DIR)/$(FRAME_DATA) $(DATA_DIR)/$(TRACE_DATA)
 .PHONY : clean dist-clean dist-clean-1
 
 clean :
-	rm    $(CLEAN_FILES) ;\
+	rm    $(CLEAN_FILES) strace_parser_prof.* ;\
 	rmdir $(CLEAN_PATHS) ;\
 	true
 

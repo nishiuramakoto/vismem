@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
+
 {- |
 ************************************************************************
 *                                                                      *
@@ -487,22 +489,27 @@ where
 import Hyper
 import Invariant
 
+import Data.Maybe
 import Data.List
 
-import           Data.IntervalMap          (IntervalMap)
-import qualified Data.IntervalMap          as IntervalMap
+import           Data.IntervalMap.Strict    (IntervalMap)
+import qualified Data.IntervalMap.Strict   as IntervalMap
 import           Data.IntervalMap.Interval (Interval)
 import qualified Data.IntervalMap.Interval as Interval
 
+import GHC.Generics (Generic)
+import Control.DeepSeq
+import Control.Exception
+
 import Test.Hspec
 import Test.QuickCheck
-import Test.HUnit
+import Test.HUnit hiding(assert)
 
 -- | The base ring
 type A         = Hyper Integer
 
 data Singleton = Singleton -- ^ The terminal set (==1 in Sets)
-               deriving (Eq,Ord,Show)
+               deriving (Eq,Ord,Show, Generic, NFData)
 {-|
 Recall that a strong/effective/split generating family is a collection of objects {G_i} such that
 
@@ -680,32 +687,96 @@ on the base topology and on the type of the sheaf.
 -}
 
 -- @tbd: I could not find higher dimensional range trees in Hackage?? Will I have to do it?
-data Section a s = Section
-                 { section_data     :: IntervalMap a s -- ^ Open intervals only
+data Section a s = SectionUnsafe
+                 { section_genmap_unsafe   :: IntervalMap a s -- ^ Open intervals only
+                 , section_gencount_unsafe :: ! Int           -- ^ IVMap doesn't keep size data???
+                   -- , section_canonical :: ! Bool           -- ^ @tbd for efficiency
                  }
-               deriving (Show)
+               deriving (Show, Generic, NFData)
 
--- | Change the representation to a sorted list of generating sections
-section_to_asc_list :: HyperNum a => Section a s -> [(Generator a, s)]
-section_to_asc_list (Section section_data) = IntervalMap.toAscList section_data
+-- Internal only
+section_to_tuple_unsafe (SectionUnsafe map n) = (map,n)
+
+-- Interval only
+section_smaller_unsafe s t = section_gencount_unsafe s < section_gencount_unsafe t
+
+-- Not well-defined on equivalece classes,
+-- but the implication 'section_eq_unsafe --> (==)' does hold
+section_eq_unsafe :: (HyperNum a, Eq s)
+                     => Section a s -> Section a s -> Bool
+section_eq_unsafe (SectionUnsafe map n) (SectionUnsafe map' n') =
+        n == n' && map == map'
+
 
 -- Change the representation to an interval map, doesn't check consistency
 section_from_list_unsafe :: HyperNum a => [(Generator a, s)] -> Section a s
-section_from_list_unsafe gs = Section (IntervalMap.fromList gs)
+section_from_list_unsafe gs = foldl' (<*) section_empty gs
+        where
+                SectionUnsafe map n <* (g,x) = SectionUnsafe (IntervalMap.insert g x map) (force $ n+1)
+                force x = x `seq` x
+
+section_from_list_unsafe' :: HyperNum a => [(Generator a, s)] -> Section a s
+section_from_list_unsafe' gs = SectionUnsafe map n
+        where
+                map = IntervalMap.fromList gs
+                n   = length gs
+
+
+-- Glueing without checking
+-- O(m*log n) for smaller m
+-- @tbd treat the case where m*log n > m + n
+section_glue_unsafe :: HyperNum a => Section a s -> Section a s -> Section a s
+section_glue_unsafe (SectionUnsafe m n) (SectionUnsafe m' n') =
+        with_invariant "section_glue_unsafe"
+        precondition
+        postcondition
+        $ SectionUnsafe m'' (n+n')
+        where
+                precondition    = n >= 0 && n' >= 0
+                postcondition s = True
+
+                m'' | n > n'    = m  <* m'
+                    | otherwise = m' <* m
+
+                m <*  m'     = IntervalMap.foldlWithKey insert m m'  -- No foldl' ??
+                insert m g x = force $ IntervalMap.insert g x m
+                force x      = x `seq` x
+
+-- Not well-defined, internal only
+section_foldl'_unsafe :: (t -> (Generator a, s) -> t) -> t -> Section a s -> t
+section_foldl'_unsafe (*) x s = IntervalMap.foldlWithKey f x (section_genmap_unsafe s)
+        where
+                f x g v = force $ x * (g,v)
+                force x = x `seq` x
+
+-- Not well-defined, internal only
+section_foldr_unsafe :: ((Generator a, s) -> t -> t) -> t -> Section a s -> t
+section_foldr_unsafe (*) x s = IntervalMap.foldrWithKey f x (section_genmap_unsafe s)
+        where
+                f g v x  = (g,v) * x
 
 -- | The domain of a section, represented as a list of generators in asc order
 section_domain_asc :: HyperNum a => Section a s -> [Generator a]
 section_domain_asc = map fst . section_to_asc_list
 
--- Glueing without checking
-section_glue_unsafe :: HyperNum a => Section a s -> Section a s -> Section a s
-section_glue_unsafe s s' = Section $ IntervalMap.union (section_data s) (section_data s')
+
+-- | Change the representation to a sorted list of generating sections
+section_to_asc_list :: HyperNum a => Section a s -> [(Generator a, s)]
+section_to_asc_list s = IntervalMap.toAscList $ section_genmap_unsafe s
+
 
 -- | Tests wheter it is the (unique) section on the initial object, i.e. F(0).
 --   Note that this is really a terminal object in the category of sections and restrictions..
 --   What would be the better name of this?
 section_null :: HyperNum a => Section a s -> Bool
-section_null s = IntervalMap.null $ section_data s
+section_null (SectionUnsafe m n) =
+        with_invariant "section_null"
+        precondition
+        postcondition
+        $ n == 0
+        where
+                precondition    = n >= 0
+                postcondition b = b == IntervalMap.null m
 
 spec_section_null = it "tests x == F(0) " $ do
         section_null s0  @=? True
@@ -713,30 +784,43 @@ spec_section_null = it "tests x == F(0) " $ do
 
 -- | F(0), i.e. the unique section on the initial object
 section_empty :: HyperNum a => Section a s
-section_empty = Section (IntervalMap.empty)
+section_empty = SectionUnsafe IntervalMap.empty 0
 
 -- To simplify testing
 s0 = section_empty :: Section A Int
 
 -- | The section on a single generator
 section_singleton :: HyperNum a => (Generator a, s) -> Section a s
-section_singleton (g,x) = Section $ IntervalMap.singleton g x
+section_singleton (g,x) = SectionUnsafe (IntervalMap.singleton g x) 1
 
 {-
 The most basic building block for defining topological operations
 to ensure reasonable computational complexity (e.g. O((log n)^d) for a dimension d).
 Note that this itself is not a well-defined topological operation.
 
-It splits the section into three parts: one below (in a sense) the generator,
-one intersecting the generator, and the other above the generator.
-The three may not necessarily be disjoint; so this doesn't topologically make sense.
+It splits the section into two parts: local generators and non-local generators.
+The two may not necessarily be disjoint; so this doesn't topologically make sense.
 -}
 section_split_at_unsafe :: HyperNum a
-                           => Generator a -> Section a s -> (Section a s, Section a s, Section a s)
-section_split_at_unsafe g (Section section_data) =
-        let (below, s, above) =  IntervalMap.splitIntersecting section_data g
-        in
-                (Section below, Section s, Section above)
+                           => Generator a -> Section a s -> (Section a s, Section a s)
+section_split_at_unsafe g (SectionUnsafe map n) =
+        with_invariant "section_split_at_unsafe"
+        precondition
+        postcondition
+        $ ( SectionUnsafe local ln
+          , SectionUnsafe other on
+          )
+        where
+                precondition = n >= 0
+                postcondition (local,other) = section_gencount_unsafe local >= 0 &&
+                                              section_gencount_unsafe other >= 0
+
+                local = IntervalMap.intersecting map g   -- Doc says O(log n) in average
+                ln    = IntervalMap.size local           -- O(n)..
+                other = IntervalMap.foldlWithKey del map local -- No foldl'??
+                on    = n - ln
+                del m g x = assert (IntervalMap.member g m) $ IntervalMap.delete g m
+
 
 -- | Global validity, O(n)
 --   Tests whether it is a section of the constant sheaf Δs
@@ -746,7 +830,7 @@ section_valid s =
             coherent         = all open  $ map fst $ concat gss
             locally_constant = all const gss
         in
-                locally_constant && coherent
+                section_gencount_unsafe s >= 0 && locally_constant && coherent
         where
                 open (Interval.OpenInterval _ _) = True
                 open _ = False
@@ -786,8 +870,10 @@ instance (HyperNum a, Eq s) => Eq (Section a s) where
         -- @tbd slow
         s == t = let ms = section_canonicalize s
                      mt = section_canonicalize t
-                  in
-                          section_data ms == section_data mt
+                 in
+                         case (ms,mt) of
+                         (Just cs, Just ct) -> section_eq_unsafe cs ct
+                         _ -> error "(==): not sections; undefined"
 
 spec_section_eq = it "defines the equivalence relation for the representations of sections" $ do
         let s = section_from_list_unsafe
@@ -800,34 +886,53 @@ spec_section_eq = it "defines the equivalence relation for the representations o
       Canonicalize a section, i.e. transform to the most efficient representation
       while preserving the equality of sections.
 -}
-section_canonicalize :: (HyperNum a, Eq s) => Section a s -> Section a s
+section_canonicalize :: (HyperNum a, Eq s) => Section a s -> Maybe (Section a s)
 section_canonicalize s =
         with_invariant "section_canonicalize"
         precondition
         postcondition
-        t
+        mt
 
         where
                 precondition  = section_valid s
-                postcondition = section_valid
+                postcondition (Just s) = section_valid s
+                postcondition Nothing  = True
 
-                t  = section_from_list_unsafe $ map union $ section_to_asc_components_list s
+                mt  = fmap section_from_list_unsafe $
+                      foldr (<:) (Just [])          $
+                      map maybe_union               $
+                      section_to_asc_components_list s
 
-                union gs = foldl1' (\/) gs
+                Nothing <: _       = Nothing
+                _       <: Nothing = Nothing
+                Just x  <: Just xs = Just (x:xs)
 
-                (s,x) \/ (t,y) | x == y    = (gen_union s t, x)
-                               | otherwise = error "inconsistent; this is not a section"
+                maybe_union []     = Nothing
+                maybe_union (g:gs) = foldl' (\/) (Just g) gs
+
+                Nothing    \/ _ = Nothing
+                Just (s,x) \/ (t,y)
+                        | x == y    = Just (gen_union s t, x)
+                        | otherwise = Nothing
 
 spec_section_canonicalize = it "transforms a section to the canonical form" $ do
-        let x @->? y =  section_data (section_canonicalize x) @=? section_data y
+        let s = section_from_list_unsafe
+            x @->? y =  (fromJust $ section_canonicalize x) `section_eq_unsafe` y @=? True
+
+        let s1 = s [(genA (0,1),1)]
+            s2 = s [(genA (0,1),1)
+                   ,(genA (1-dx,2),1)]
+            s3 = s [(genA (0,2),1)]
+            s4 = s [(genA (0,1),1)
+                   ,(genA (0+dx,1-2*dx),1)
+                   ,(genA (1-3*dx,2),1)
+                   ]
+            s5 = s [(genA (0,2),1)]
+
         s0 @->? s0
-        section_singleton (genA (0,1),1) @->? section_singleton (genA (0,1),1)
-        section_from_list_unsafe [ (genA (0,1),1)
-                                 , (genA (1-dx,2),1)]     @->? section_singleton (genA (0,2),1)
-        section_from_list_unsafe [ (genA (0,1),1)
-                                 , (genA (0+dx,1-2*dx),1)
-                                 , (genA (1-3*dx,2),1)
-                                 ] @->? section_singleton (genA (0,2),1)
+        s1 @->? s1
+        s2 @->? s3
+        s4 @->? s5
 
 
 {- * Operations on sections
@@ -840,7 +945,7 @@ that are stable under geometric morphisms.
 {- ** Geometric/Topological operations
 
 Geometric/Topological operations include:
-1. dealing with connected components
+1. dealing with connectedness
 2. dense covering of the compliment
 3. restriction
 4. gluing
@@ -893,60 +998,62 @@ spec_section_to_asc_components_list =
 section_connected_components :: HyperNum a => Section a s -> [Section a s]
 section_connected_components s = map section_from_list_unsafe $ section_to_asc_components_list s
 
--- | Restrict the section to its connected components intersecting the given generator
+-- | Restrict the section to its connected components intersecting the given generator.
 --   Note that there always exists an ordering of generators that respects connected components
 --   even in very high dimensional, non-constructive cases (use Zorn's lemma).
 section_split_components_at :: (HyperNum a, Eq s)
-                               => Generator a -> Section a s -> (Section a s, Section a s, Section a s)
+                               => Generator a -> Section a s -> (Section a s, Section a s)
 section_split_components_at g s =
         with_invariant "section_split_components_at"
         precondition
         postcondition
-        t
+        (local, other)
         where
                 precondition  = not (gen_null g) && section_valid s
-                postcondition (below,local,above) = section_valid below &&
-                                                    section_valid local &&
-                                                    section_valid above
+                postcondition (local, other) = section_valid local &&
+                                               section_valid other
 
-                t =  let (below, local, above) = section_split_at_unsafe g s
-                         h                     = foldl1' gen_union $ section_domain_asc local
-                         (bb, bl, ba)          = section_split_components_at h below
-                         (ab, al, aa)          = section_split_components_at h above
-                     in
-                             if section_null local
-                             then (below, local, above)
-                             else
-                                     if section_null ba && section_null ab
-                                     then (bb   , bl\/local\/al, aa)
-                                     else error "section_split_components:impossible"
+                (l, o)   = section_split_at_unsafe g s
+                ldom     = foldl1' gen_union $ g:section_domain_asc l  -- @tbd this wont' generalize
+                (l', o') = section_split_components_at ldom o        -- recurse
+
+                local | section_null l = l
+                      | otherwise      = l \/ l'
+
+                other | section_null l = s
+                      | otherwise      = o'
 
                 (\/) = section_glue_unsafe
 
 spec_section_split_components_at =
-        it "splits the connected components of a section into three parts" $ do
-                let split_at g gs = section_split_components_at g (sc gs)
-                    sc            = section_from_list_unsafe :: [(GenA,Int)] -> Section A Int
-                    eq x y        = section_data x @=? section_data y
-                    (x,y,z) @==? (a,b,c) = eq x (sc a) >> eq y (sc b) >> eq z (sc c)
+        it "splits the connected components of a section into two parts" $ do
+                let split_at = section_split_components_at
+                    s        = section_from_list_unsafe
+                    rep      = section_to_tuple_unsafe
 
-                let s0 = []
-                    s1 = [ (genA (0,1),0), (genA (1,2),1) ]
+                    (x,y) @==? (a,b) = do rep x @=? rep a
+                                          rep y @=? rep b
+
+                let g1 = (genA (0,1),0)
+                    g2 = (genA (1,2),1)
+                    g3 = (genA (2-dx,3),1)
+                    s123 = s[g1,g2,g3]
+                    s1   = s[g1]
+                    s23  = s[g2,g3]
+
+                split_at (genA (0,1)) s0           @==? (s0  , s0)
+                split_at (genA (-2,-1))     s123   @==? (s0, s123)
+                split_at (genA (-dx,dx))    s123   @==? (s1, s23)
+                split_at (genA (3-dx,4))    s123   @==? (s23, s1)
+                split_at (genA (1-dx,1+dx)) s123   @==? (s123, s0)
 
 
-                split_at (genA (0,1)) []       @==? ([],[],[])
-                split_at (genA (1-dx,1+dx)) s1 @==? ([], s1, [])
-                split_at (genA (-2,-1)) s1     @==? ([], [], s1)
-                split_at (genA (2,3))   s1     @==? (s1, [], [])
-                split_at (genA (0,1))   s1     @==? ([], [(genA (0,1),0)], [(genA (1,2),1)])
-                split_at (genA (1,2))   s1     @==? ([(genA (0,1),0)], [(genA (1,2),1)], [])
-                split_at (genA (0,dx))  s1     @==? ([], [(genA (0,1),0)], [(genA (1,2),1)])
 
 
 -- | Get the connected components at the generator
 section_components_at :: (HyperNum a, Eq s) => Generator a -> Section a s -> Section a s
 section_components_at g s =
-        let (below, local, above) = section_split_components_at g s
+        let (local, other) = section_split_components_at g s
         in local
 
 spec_section_components_at =
@@ -957,8 +1064,8 @@ spec_section_components_at =
 
 {- *** A dense covering of the compliment
 
-For any object U in C, the coproduct ∐V    does not exist.
-                                    V∩U=0
+In our category, for any object U, the coproduct ∐V    does not exist.
+                                                 V∩U=0
 
 However we can 'create the colimit' by considering the stream of growing large-enough
 objects that are disjoint to U:
@@ -966,22 +1073,37 @@ objects that are disjoint to U:
 Uᶜ° = [V0,V1,..| Vi∩U == 0, closure(std(Vi∪U)) == std(A), Vi -> V(i+1)]
 s.t. if W∩U == 0 then there is some i such that W -> Vi.
 
-(Here std is the continuous projection onto the standard part of the hyperreal ring A)
+(Here std is the continuous projection onto the standard part of the base hyperreal ring A.)
 
 -}
 
--- | [O(n),O(1),O(1),..]
+-- | [O(n),O(log n),O(log n),..] (but not now)
 --   The first element is already 'large enough' that it densely covers the standard part of the complement.
---   Note that this is not so trivial and costly in higher dimensional cases.. what to do?
-section_compliments :: HyperNum a => Section a s -> [Section a Singleton]
-section_compliments s = map (section_from_list_unsafe . cover boundaries) [1..]
+--   (i.e. the union of the argument and any of the elements of the list will cover (-inf,inf) 'densely'.)
+--   Note that this function is not so trivial and will be costly in higher dimensional cases.. what to do?
+section_compliments :: (HyperNum a, Eq s) => Section a s -> [Section a Singleton]
+section_compliments s =
+        with_invariant "section_compliments"
+        precondition
+        postcondition
+        $ map (section_from_list_unsafe . cover boundaries) [1..]
         where
+                precondition = section_valid s
+                postcondition (sc:_) = sc `section_disjoint` s' &&
+                                       area (std /\ (sc \/ s')) == area std
+                        where
+                                s'     = section_lift1 (const Singleton) s
+                                std    = section_singleton (gen (-inf,inf),Singleton)
+                                x \/ y = fromJust $ section_glue x y
+                                x /\ y = fromJust $ section_restrict x y
+                                area = section_area
+
                 boundaries = section_boundary_points_asc s -- even
 
                 cover [] n = [(gen (-inf^n,inf^n), Singleton)]
                 cover bs n = let b0 = head bs
                                  bn = head (reverse bs)
-                                 cs = [(-inf^n+b0)] ++ bs ++ [(bn+inf^n)] -- even
+                                 cs = [(-2*inf^n+b0)] ++ bs ++ [(bn+2*inf^n)] -- even
                                  gs = filter (not . gen_null) $ map gen $ take_odd $ pair cs
                              in
                                      zip gs (repeat Singleton)
@@ -999,8 +1121,8 @@ spec_section_compliments =
                 let s1 =  s [(genA (0,1),0),(genA (2,3),1)]
                     s2 =  s [(genA (0,1),0),(genA (1,3),1)]
 
-                head (cs s1) @=? s [(genA (-inf,0),z),(genA (1,2),z),(genA (3,3+inf),z)]
-                head (cs s2) @=? s [(genA (-inf,0),z),(genA (3,3+inf),z)]
+                head (cs s1) @=? s [(genA (-2*inf,0),z),(genA (1,2),z),(genA (3,3+2*inf),z)]
+                head (cs s2) @=? s [(genA (-2*inf,0),z),(genA (3,3+2*inf),z)]
 
 gen_compliments :: HyperNum a => Generator a -> [Section a Singleton]
 gen_compliments g = section_compliments $ section_singleton (g,Singleton)
@@ -1072,7 +1194,7 @@ section_restrict_at g s =
                 precondition  = not (gen_null g) && section_valid s
                 postcondition = section_valid
 
-                (below, local, above) = section_split_at_unsafe g s
+                (local, other) = section_split_at_unsafe g s
 
                 t   = section_from_list_unsafe $ gen_restrict_at g $ section_to_asc_list local
 
@@ -1101,9 +1223,9 @@ section_restrict_at_consistently g x s =
                 postcondition Nothing  = True
                 postcondition (Just s) = section_valid s
 
-                (below, local, above) = section_split_at_unsafe g s
+                (local, other) = section_split_at_unsafe g s
 
-                t   = fmap section_from_list_unsafe           $
+                t   = fmap section_from_list_unsafe    $
                       gen_restrict_at_consistently g x $
                       section_to_asc_list local
 
@@ -1160,6 +1282,15 @@ spec_section_restrict =
                                                           ])
 
 
+-- | Does x subsumes y, i.e. does x restrict to y?
+section_subsumes :: (HyperNum a, Eq s)
+                    => Section a s -> Section a s -> Bool
+section_subsumes s t =
+        case section_restrict s t of
+        Just t' ->  t' == t
+        Nothing ->  False
+
+
 -- *** Gluing
 
 -- | Glue two generating sections
@@ -1197,16 +1328,17 @@ section_glue_at g x s =
                 postcondition Nothing  = True
                 postcondition (Just s) = section_valid s
 
-                (below, local, above) = section_split_at_unsafe g s
+                (local, other) = section_split_at_unsafe g s
 
-                mlocal = fmap section_canonicalize        $
+                mlocal = fmap fromJust $
+                         fmap section_canonicalize        $
                          foldl' (\/) (Just section_empty) $
                          map (gen_glue (g,x))             $
                          (g,x):section_to_asc_list local
 
                 ms = case mlocal of
                         Nothing -> Nothing
-                        Just s  -> Just below \/ Just s \/ Just above
+                        Just s  -> Just other \/ Just s
 
                 _        \/ Nothing = Nothing
                 Nothing  \/ _       = Nothing
@@ -1221,6 +1353,8 @@ spec_section_glue_at =
                 section_glue_at (genA (-dx,dx)) 1 s1 @=? Nothing
                 section_glue_at (genA (-dx,dx)) 0 s1 @=? Just (s [(genA (-dx,1),0),(genA (2,3),0)])
                 section_glue_at (genA (1-dx,2+dx)) 0 s1 @=? Just (s [(genA (0,3),0)])
+
+
 
 -- | O(n*log m) at best, should be optimized
 --   Glue two sections together
@@ -1237,7 +1371,10 @@ section_glue s t =
                 postcondition Nothing  = True
                 postcondition (Just s) = section_valid s
 
-                mu = foldl' (\/) (Just s) $ section_to_asc_list t
+                mu | s `section_smaller_unsafe`  t = t <* s
+                   | otherwise                     = s <* t
+
+                x <* y = section_foldl'_unsafe (\/) (Just x) y
 
                 Nothing  \/ _     = Nothing
                 (Just s) \/ (g,x) = section_glue_at g x s
@@ -1320,7 +1457,16 @@ section_lift1_partial f s  =
                 precondition     = section_valid s
                 postcondition s  = True
 
-                t = Section $ IntervalMap.mapMaybe f $ section_data s
+                t = SectionUnsafe (IntervalMap.fromDistinctAscList gs) n
+
+                (gs,n) = IntervalMap.foldrWithKey push ([],0) $ section_genmap_unsafe s
+
+                push g x (gs,n) =
+                        case f x of
+                        Just y  -> ((g,y):gs, force $ n+1)
+                        Nothing -> (gs,n)
+
+                force x = x `seq` x
 
 spec_section_lift1_partial =
         it "lifts a geometric theory on s to a 'Section s'" $ do
@@ -1360,8 +1506,8 @@ section_lift2_partial (*) s t =
                     map (s /\)        $
                     section_to_asc_list t -- @tbd slow, do bisecting
 
-                s /\ (g,x) = let (sb, sl, sa) = section_split_at_unsafe g s
-                             in  zip (section_to_asc_list sl) (repeat (g,x))
+                s /\ (g,x) = let (local, other) = section_split_at_unsafe g s
+                             in  zip (section_to_asc_list local) (repeat (g,x))
 
                 apply (*) gs = let process ((g,x),(h,y)) = listify (g/\h) (x*y)
                                    listify _ Nothing     = []
