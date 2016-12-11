@@ -246,7 +246,7 @@ shiny.ui.tabs <- function(gs) {
     tabs.panel <- do.call(tabsetPanel, tabs)
 
     fluidPage(
-        titlePanel("Memamps"),
+        titlePanel("Vismem"),
         mainPanel( tabs.panel, width = 12)
         )
 }

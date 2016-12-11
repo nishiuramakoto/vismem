@@ -17,6 +17,12 @@ R_DOWNLOAD_FILE_METHOD  = wget
 # Must be a non empty string ('.' should work)
 BUILD_DIR   = build
 
+
+#####################################################
+## Optional configuration                          ##
+## Try changing the followings if something breaks ##
+#####################################################
+
 # The path prefix for the actually generated data
 # This is not 'make clean'ed, use make dist-clean
 # try 'make DATA_DIR=existing_dir' to re-analyze existing data
@@ -26,11 +32,6 @@ DATA_DIR_STEM  = $(BUILD_DIR)/data-
 # Also note the strictness here
 TIMESTAMP := $(shell date  '+%F_%Hh%Mm%Ss')
 DATA_DIR  := $(DATA_DIR_STEM)$(TIMESTAMP)
-
-#####################################################
-## Optional configuration                          ##
-## Try changing the followings if something breaks ##
-#####################################################
 
 # These prerequisites are only a suggestion, I will not actually run them
 
@@ -64,7 +65,7 @@ FRAME_DATA           = frame.data
 TRACE_DATA           = trace.data
 
 # What gets cleaned
-CLEAN_FILES      = $(STRACE_PARSER_BIN) spec_Sheaf.hs spec_Hyper.hs
+CLEAN_FILES      = $(STRACE_PARSER_BIN) spec_Sheaf.hs spec_Hyper.hs screenshot.png
 CLEAN_PATHS      = $(BUILD_DIR)
 DIST_CLEAN_FILES = $(DATA_DIR)/$(STRACE_DATA) $(DATA_DIR)/$(FRAME_DATA) $(DATA_DIR)/$(TRACE_DATA)
 DIST_CLEAN_PATHS = $(DATA_DIR)
@@ -103,6 +104,9 @@ $(DATA_DIR) :
 # Suggest (but not actually install) prerequisites.
 .PHONY: show-prerequisites prerequisite_r prerequisite_cabal prerequisite_apt prerequisite_strace
 show-prerequisites : prerequisite_r prerequisite_apt prerequisite_cabal prerequisite_strace
+	@echo COMMAND=$(COMMAND)   ;\
+	 echo DATA_DIR=$(DATA_DIR)
+
 prerequisite_r :
 	@echo Try running the following commands in a R session: ;\
 	 echo "> options(\"download.file.method\" = \"$(R_DOWNLOAD_FILE_METHOD)\")" ;\
@@ -175,12 +179,16 @@ view : $(STRACE_PARSER_BIN)_prof.svg
 %.svg : %.hp
 	hp2pretty $<
 
-
-
 # Run the Shiny server
 .PHONY: runR
 runR : $(r_script) $(DATA_DIR)/$(FRAME_DATA) $(DATA_DIR)/$(TRACE_DATA)
 	Rscript $^
+
+# Misc
+.PHONY : screenshot
+screenshot : img/screenshot.png
+img/screenshot.png :
+	import $@
 
 # Cleaners
 .PHONY : clean dist-clean dist-clean-1
