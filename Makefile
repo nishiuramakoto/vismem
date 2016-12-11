@@ -106,7 +106,7 @@ show-prerequisites : prerequisite_r prerequisite_apt prerequisite_cabal prerequi
 prerequisite_r :
 	@echo Try running the following commands in a R session: ;\
 	 echo "> options(\"download.file.method\" = \"$(R_DOWNLOAD_FILE_METHOD)\")" ;\
-	 echo "> $(R_INSTALL_PACKAGES_COMMAND)"
+	 echo "> $(r_install_packages_command)"
 
 prerequisite_apt :
 	@echo Run your package manager like this: ;\

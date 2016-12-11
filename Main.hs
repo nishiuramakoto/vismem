@@ -22,13 +22,10 @@ The sections are:
 7. IO
 
 Note:
-1. all the functions are in underscore_case to distinguish them from
-      the library functions,
-2. uses Strings exclusively; feel free to improve it ;)
-
-Bug: if a child pid has been recycled during the process's liftime,
-     the behavior is undefined.
-
+1. All the functions are in underscore_case to distinguish them from
+   the library functions,
+2. Uses Strings exclusively, since bottleneck is elsewhere. Feel free to improve it ;)
+3. Should be like two orders of magnitudes faster
 -}
 
 module Main    where
@@ -1393,19 +1390,19 @@ tee_progress id n xs =
 -- that it incrementally changes after each IO) doesn't necessarily reflect our common sense
 -- knowledge about the  particular system we need to deal with.
 --
--- Consider, for example, emulating "git" where file system objects can essentially be assumed
+-- Consider, for example, emulating "make" where file system objects can partially be assumed
 -- 'referentially transparent', i.e. the contents of the file can mostly be determined by its
--- path and its commit time. In essense we have to model the true dependency of our IO based on
--- the specific assumptions we are making; there can be no one-fits-all solution. In particular 'Iteratee'
--- based solutions should not be assumed universally applicable; what we need is probably a custom OurIO
--- for each application.
+-- path and its modification time. In essense we have to model the true dependency of our IO based on
+-- the specific assumptions we are making; there can be no one-fits-all solution. What we probably need is a
+-- technology to model data dependency for our custom 'RealWorld', and a tool by which we can create a
+-- custom 'OurIO' monad based on that dependency model.
 --
 -- One possible way to cleanly model that kind of dependency might be the Grothendieck topology (again!)
 -- because clearly dependencies are 'stable under pullback' (that is, if X and Y depend on
 -- some assumption Z then the (strict) pair (X,Y) will also depend on Z, and it will be universal in the
 -- obvious sense.)
 -- Thus we can consider a 'sheaf on dependency', and an IO action on
--- such a space would then be a section connecting two 'assumptions'
+-- such a space would then be a path connecting two 'assumptions'
 -- (not necessarily points; probably  locales.)
 
 infixl 2 >>=~
@@ -1413,7 +1410,7 @@ m >>=~ f =  do x <- m
                unsafeInterleaveIO $ f x
 
 -- |- Assumption:
--- each element in the resulting list depends on the deep evaluation of the previous element; but no more.
+-- each element in the resulting list depends on the deep evaluation of the previous element, but no more.
 -- (this is of course broken, just a quick hack)
 for_stream :: NFData b => [a] -> (a -> IO b) -> IO [b]
 for_stream [] f = return []
@@ -1428,6 +1425,60 @@ for_stream (x:xs) f = do
                         y' <- f x
                         ys <- unsafeInterleaveIO $ go y' xs
                         return (y':ys)
+
+verbose_hclose :: Handle -> IO ()
+verbose_hclose h = do info  "closing handle..."
+                      hShow h >>= print
+                      hClose h
+                      hShow h >>= info
+                      info "handle closed!"
+
+        where
+                info = hPutStrLn stderr
+
+tee_to :: (Pretty a, NFData a) => FilePath -> (a -> Doc) -> [a] -> IO [a]
+tee_to file pp xs = do
+        h <- openFile file WriteMode
+
+        let xs' = pair $ map Left xs ++ [Right $ verbose_hclose h]
+
+        for_stream xs' (tee' h)
+
+        where
+                tee' h (Left x, Left x') = do  render_line_to h $ pp x
+                                               return x
+                tee' h (Left x, Right job) = do render_line_to h $ pp x
+                                                job
+                                                return x
+                pair xs = zip xs (tail xs)
+
+
+
+tee :: (Pretty a, NFData a) => Handle -> (a -> Doc) -> [a] -> IO [a]
+tee h pp xs = for_stream xs $ \x -> do
+        render_line_to h $ pp x
+        return x
+
+
+-- Show line number and pass input through
+-- man nl(1)
+nl :: (Pretty a, NFData a) => Handle -> [a] -> IO [a]
+nl h xs = return (zip [1..]  xs) >>=
+          tee h (int . fst) >>=
+          return . map snd
+
+nl_format :: (Pretty a, NFData a) => Handle -> ((Int,a) -> Doc) -> [a] -> IO [a]
+nl_format h pp xs = return (zip [1..]  xs) >>=
+                  tee h pp                 >>=
+                  return . map snd
+
+nl_label h label = nl_format h (\(n,_) -> text $ printf "%s:%d" label n)
+
+wc :: FilePath -> IO Int
+wc file = readFile file >>=
+          return . lines >>=
+          return . force . length
+
 
 
 render_line_to :: Handle -> Doc -> IO ()
@@ -1480,53 +1531,6 @@ tee_stack_trace file xs = tee_to file pp (Nothing : map Just xs) >>=
                 pp Nothing  = text "trace_id pid trace"
                 pp (Just x) = pp_trace x
 
-tee_to :: (Pretty a, NFData a) => FilePath -> (a -> Doc) -> [a] -> IO [a]
-tee_to file pp xs = do
-        h <- openFile file WriteMode
-
-        let job = do info  "closing handle..."
-                     hShow h >>= print
-                     hClose h
-                     hShow h >>= info
-                     info "handle closed!"
-            xs' = pair $ map Left xs ++ [Right job]
-
-        for_stream xs' (tee' h)
-
-        where
-                tee' h (Left x, Left x') = do  render_line_to h $ pp x
-                                               return x
-                tee' h (Left x, Right job) = do render_line_to h $ pp x
-                                                job
-                                                return x
-                pair xs = zip xs (tail xs)
-
-                info = hPutStrLn stderr
-
-tee :: (Pretty a, NFData a) => Handle -> (a -> Doc) -> [a] -> IO [a]
-tee h pp xs = for_stream xs $ \x -> do
-        render_line_to h $ pp x
-        return x
-
-
--- Show line number and pass input through
--- man nl(1)
-nl :: (Pretty a, NFData a) => Handle -> [a] -> IO [a]
-nl h xs = return (zip [1..]  xs) >>=
-          tee h (int . fst) >>=
-          return . map snd
-
-nl_format :: (Pretty a, NFData a) => Handle -> ((Int,a) -> Doc) -> [a] -> IO [a]
-nl_format h pp xs = return (zip [1..]  xs) >>=
-                  tee h pp                 >>=
-                  return . map snd
-
-nl_label h label = nl_format h (\(n,_) -> text $ printf "%s:%d" label n)
-
-wc :: FilePath -> IO Int
-wc file = readFile file >>=
-          return . lines >>=
-          return . force . length
 
 dump :: FilePath -> FilePath -> FilePath -> IO ()
 dump strace_in frame_out trace_out = do
