@@ -344,6 +344,7 @@ strace xs = catMaybes $
         where
                 result (Right (a, _, _)) = a
                 result (Left err)        = error $ show err
+
                 continuing (Right (_, xs, _)) = not $ null xs
                 continuing (Left  err)        = True
 
@@ -381,7 +382,7 @@ token_syscall_resumed :: ParseStrace StraceLine
 token_syscall_resumed = define_token is_syscall_resumed
 
 token_syscall_resumed_error :: ParseStrace StraceLine
-token_syscall_resumed_error = define_token is_syscall_error
+token_syscall_resumed_error = define_token is_syscall_resumed_error
 
 token_trace :: ParseStrace StraceLine
 token_trace = define_token is_stack_trace
@@ -616,7 +617,7 @@ pp_vma (i, v) = low i <+> high i <+> valuation v <+> trace_id v
                 at_page_boundary x = (x `rem` 2^12 == 0)
 
 
--- There is a nasty bug in read.table in R that prevents reading the sequence \\\" correctly
+-- R has a nasty bug in read.table that prevents reading the sequence \\\" correctly
 escape_fix_regex = mkRegex $ bs ++ bs ++ bs ++ dq
         where
                 bs = "\\"
@@ -626,10 +627,11 @@ escape :: Doc -> Doc
 escape s    = text $ bugfix $ show $ render s
         where
                 bugfix :: String -> String
-                bugfix s = subRegex escape_fix_regex s "&bsol;\\\""
+                bugfix s = subRegex escape_fix_regex s "''"
+
 
 pp_trace ::  UniqueStrace -> Doc
-pp_trace (n, Strace tid syscall args ret trace) = int n <+> (escape trace_doc)
+pp_trace (n, Strace tid syscall args ret trace) = int n <+> integer tid <+> (escape trace_doc)
         where
                 args'       = hsep $ punctuate comma (map text args)
                 funcall     = integer tid <+> text syscall <> parens args' <+> equals <+> text ret
@@ -637,7 +639,7 @@ pp_trace (n, Strace tid syscall args ret trace) = int n <+> (escape trace_doc)
                 trace_doc   = vcat $ funcall : map text trace_lines
 
 
-pp_trace (n, StraceError tid syscall args ret err trace) = int n <+> (escape trace_doc)
+pp_trace (n, StraceError tid syscall args ret err trace) = int n <+> integer tid <+> (escape trace_doc)
         where
                 args'       = hsep $ punctuate comma (map text args)
                 funcall     = integer tid <+> text syscall <> parens args' <+>
@@ -646,13 +648,13 @@ pp_trace (n, StraceError tid syscall args ret err trace) = int n <+> (escape tra
                 trace_doc   = vcat $ funcall : map text trace_lines
 
 
-pp_trace (n, StraceExit tid code trace) = int n <+> (escape trace_doc)
+pp_trace (n, StraceExit tid code trace) = int n <+> integer tid <+> (escape trace_doc)
         where
                 funcall     = integer tid <+> text "exit"  <+> equals <+> integer code
                 trace_lines = map sl_call_stack trace
                 trace_doc   = vcat $ funcall : map text trace_lines
 
-pp_trace (n, StraceSignal tid signal args) = int n <+> (escape trace_doc)
+pp_trace (n, StraceSignal tid signal args) = int n <+> integer tid <+> (escape trace_doc)
         where
                 args'       = hsep $ punctuate comma (map text args)
                 funcall     = integer tid <+> text "signal"  <+> equals <+> text signal <+> parens args'
@@ -954,11 +956,12 @@ ps_delete_vma g trace s =
                 precondition = vma_valid g
                 postcondition t = ps_area s >= ps_area t
 
-                t =  ps_act_vm (restrict_compl g) s
+                t =  ps_act_vm (restrict_to_compl g) s
 
-                restrict_compl g vm = let s1 = head $ gen_compliments g
-                                      in  section_lift2 const vm s1
+                restrict_to_compl g vm = let s1 = head $ gen_compliments g
+                                         in  vm /\ s1
 
+                x /\ y = section_lift2 const x y
 
 vm_diff :: VM -> VM -> VM
 vm_diff x y =
@@ -1471,7 +1474,7 @@ tee_stack_trace :: FilePath -> [UniqueStrace] -> IO [UniqueStrace]
 tee_stack_trace file xs = tee_to file pp (Nothing : map Just xs) >>=
                           return . catMaybes
         where
-                pp Nothing  = text "trace_id trace"
+                pp Nothing  = text "trace_id pid trace"
                 pp (Just x) = pp_trace x
 
 tee_to :: (Pretty a, NFData a) => FilePath -> (a -> Doc) -> [a] -> IO [a]
@@ -1496,27 +1499,25 @@ tee_to file pp xs = do
                 pair xs = zip xs (tail xs)
 
 
-tee :: (Pretty a, NFData a) => (a -> Doc) -> [a] -> IO [a]
-tee pp xs = for_stream xs $ \x -> do
-        render_line_to stdout $ pp x
+tee :: (Pretty a, NFData a) => Handle -> (a -> Doc) -> [a] -> IO [a]
+tee h pp xs = for_stream xs $ \x -> do
+        render_line_to h $ pp x
         return x
-
-
 
 
 -- Show line number and pass input through
 -- man nl(1)
-nl :: (Pretty a, NFData a) => [a] -> IO [a]
-nl xs = return (zip [1..]  xs) >>=
-        tee (int . fst) >>=
-        return . map snd
+nl :: (Pretty a, NFData a) => Handle -> [a] -> IO [a]
+nl h xs = return (zip [1..]  xs) >>=
+          tee h (int . fst) >>=
+          return . map snd
 
-nl_format :: (Pretty a, NFData a) => ((Int,a) -> Doc) -> [a] -> IO [a]
-nl_format pp xs = return (zip [1..]  xs) >>=
-                  tee pp                 >>=
+nl_format :: (Pretty a, NFData a) => Handle -> ((Int,a) -> Doc) -> [a] -> IO [a]
+nl_format h pp xs = return (zip [1..]  xs) >>=
+                  tee h pp                 >>=
                   return . map snd
 
-nl_label label = nl_format (\(n,_) -> text $ printf "%s:%d" label n)
+nl_label h label = nl_format h (\(n,_) -> text $ printf "%s:%d" label n)
 
 wc :: FilePath -> IO Int
 wc file = readFile file >>=
@@ -1526,25 +1527,34 @@ wc file = readFile file >>=
 dump :: FilePath -> FilePath -> FilePath -> IO ()
 dump strace_in frame_out trace_out = do
         ln <- wc strace_in
-        (
-                readFile strace_in   >>=
-                return . parse              >>=
-                nl_format (\(n,x) -> text $ printf "line:%d/%d" n ln)    >>=
-                return . strace_with_id     >>=
-                nl_label "stace"            >>=
-                tee_stack_trace trace_out   >>=
-                nl_label "tee_stack_trace"  >>=
-                return . emulate_vm         >>=
-                nl_label "emulate_vm"       >>=
-                return . summarize          >>=
-                nl_label "summarize"        >>=
-                write_data_frame frame_out
-                )
+        let nl name = nl_format stderr (label name ln)
+
+        traces <- readFile strace_in       >>=
+                  return . parse           >>=
+                  nl "line"                >>=
+                  return . strace_with_id  >>=
+                  nl "strace"
+
+        let tn = length traces
+        let nl name = nl_format stderr (label name tn)
+
+        () <- return traces              >>=
+              tee_stack_trace trace_out  >>=
+              nl "tee_stack_trace"       >>=
+              return . emulate_vm        >>=
+              nl "emulate_vm"            >>=
+              return . summarize tn      >>=
+              nl "summarize"             >>=
+              write_data_frame frame_out
+
+        return ()
 
         where
-                summarize xs = snapshot 1000 $ hyper_take inf xs
+                label name m (n,x) = text $ printf "%s:%d/%d" name n m
+
+                summarize n xs = every (max 1 (n `div` 1000)) xs
                 --summarize = assert' "valid" (all pt_valid) . snapshot 1000
-                finish xs = render_line_to stdout (pp_brief $ last xs)
+
 
 dump' :: FilePath -> FilePath -> FilePath -> IO ()
 dump' strace_in frame_out trace_out =
@@ -1556,7 +1566,7 @@ dump' strace_in frame_out trace_out =
         return . summarize >>=
         return . zip [1..] >>=
         return . map force >>=
-        tee  (int . fst) >>=
+        tee stderr (int . fst) >>=
         const (return ())
         where
                 summarize xs = snapshot 500 $ hyper_take 5000 xs

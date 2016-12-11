@@ -753,7 +753,7 @@ section_foldl'_unsafe (*) x s = IntervalMap.foldlWithKey f x (section_genmap_uns
 section_foldr_unsafe :: ((Generator a, s) -> t -> t) -> t -> Section a s -> t
 section_foldr_unsafe (*) x s = IntervalMap.foldrWithKey f x (section_genmap_unsafe s)
         where
-                f g v x  = (g,v) * x
+                f g v x  = (g, v) * x
 
 -- | The domain of a section, represented as a list of generators in asc order
 section_domain_asc :: HyperNum a => Section a s -> [Generator a]

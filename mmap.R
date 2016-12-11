@@ -127,9 +127,18 @@ myplot.cluster <- function(frame, labeller = "label_value") {
     return(ret)
 }
 
+find.next <- function(t) {
+    u <- sort(unique(t))
+    i <- findInterval(t,u)
+    l <- length(u)
+    v <- c(u,u[l] + u[l]-u[l-1])
+    return(v[i+1])
+}
+
 # Plot without cluster info
 myplot <- function(frame) {
-    g <- ggplot(frame, aes(x=t, y=from, xmin= t-0.5, xmax = t+0.5, ymin = from, ymax = to, fill=v)) +
+
+    g <- ggplot(frame, aes(x=t, y=from, xmin= t, xmax = find.next(t), ymin = from, ymax = to, fill=v)) +
         geom_rect()
 
     ret <- g +
@@ -171,8 +180,16 @@ mmap.plot <- function(file, B=100) {
     return(ret)
 }
 
+find.trace.pid <- function(g, pid) {
+    head(g$trace$trace[ g$trace$pid == pid ], n=1)
+}
+
 find.trace_id <- function(mmap, t, p) {
-    matched <- mmap[ mmap$t == as.integer(t) & mmap$from <= p & p < mmap$to , ]
+    cat("t=",t,"\np=",p,"\n")
+    matched <- mmap[mmap$from <= p & p < mmap$to , ]
+    dt      <- c(diff(matched$t),0)
+    matched <- matched[matched$t <= t & t < matched$t + dt,]
+    print(matched)
     return(matched$trace_id[1])
 }
 
@@ -250,6 +267,10 @@ shiny.render.text <- function(g,input) {
         page  <- input$plot_click$y
         p     <- mmap.sprint.page(page)
         trace <- find.trace(g,t,page)
+
+        if (is.na(trace)) {
+            trace <- find.trace.pid(g, g$pid)
+        }
 
         ## Print to stdout. Useful for scripting or in multi-monitor setup
         cat("pid=",g$pid, "\nt=",t , "\np=", p, "\ntrace:\n", trace,"\n")
