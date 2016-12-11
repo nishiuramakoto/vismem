@@ -3,6 +3,8 @@ module Pretty(
         Pretty(..),
         Hex,
         Monomial,
+        mystyle,
+        myrender,
         report,
         report_full,
         monomials,
@@ -38,23 +40,30 @@ class Pretty a where
         pp_brief   :: a -> Doc
         pp_brief   = pp_level 5
 
+mystyle = style { mode = PageMode
+                , lineLength = 80
+                , ribbonsPerLine = 1.5
+                }
+
+myrender = renderStyle mystyle
+
 -- |Report a summary of the data
 report :: Pretty a => String -> a -> String
-report desc d = render $
+report desc d = myrender $
                 text "REPORT<" <> text desc <> text ">" $$
                 nest 2 (pp_summary d) $$
                 text "END_REPORT\n"
 
 -- |Report  data
 report_full :: Pretty a => String -> a -> String
-report_full desc d = render $
+report_full desc d = myrender $
                      text "FULL_REPORT<" <> text desc <> text ">"  $$
                      nest 2 (pp d) $$
                      text "END_FULL_REPORT\n"
 
 -- | Pretty error reporting
 pp_error :: Doc -> a
-pp_error = error . render
+pp_error = error . myrender
 
 
 instance Pretty Doc     where pp_level _ = id
@@ -89,8 +98,7 @@ pp_list_summary n xs
                 len = fromIntegral $ length xs
 
 instance (Pretty k, Pretty v) => Pretty (Map k v) where
-        pp_level n m = text "Map.fromList" <+> pp_level n (Map.toAscList m)
-
+        pp_level n m = text "Map.fromList" <+>  pp_level n (Map.toAscList m)
 
 newtype Hex a = Hex a
 instance (Integral a, Show a) => Show   (Hex a) where

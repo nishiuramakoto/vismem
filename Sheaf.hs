@@ -508,8 +508,8 @@ import Test.HUnit hiding(assert)
 -- | The base ring
 type A         = Hyper Integer
 
-data Singleton = Singleton -- ^ The terminal set (==1 in Sets)
-               deriving (Eq,Ord,Show, Generic, NFData)
+type Singleton = () -- ^ The terminal set (==1 in Sets)
+
 {-|
 Recall that a strong/effective/split generating family is a collection of objects {G_i} such that
 
@@ -1092,21 +1092,21 @@ section_compliments s =
                 postcondition (sc:_) = sc `section_disjoint` s' &&
                                        area (std /\ (sc \/ s')) == area std
                         where
-                                s'     = section_lift1 (const Singleton) s
-                                std    = section_singleton (gen (-inf,inf),Singleton)
+                                s'     = section_lift1 (const ()) s
+                                std    = section_singleton (gen (-inf,inf),())
                                 x \/ y = fromJust $ section_glue x y
                                 x /\ y = fromJust $ section_restrict x y
                                 area = section_area
 
                 boundaries = section_boundary_points_asc s -- even
 
-                cover [] n = [(gen (-inf^n,inf^n), Singleton)]
+                cover [] n = [(gen (-inf^n,inf^n), ())]
                 cover bs n = let b0 = head bs
                                  bn = head (reverse bs)
                                  cs = [(-2*inf^n+b0)] ++ bs ++ [(bn+2*inf^n)] -- even
                                  gs = filter (not . gen_null) $ map gen $ take_odd $ pair cs
                              in
-                                     zip gs (repeat Singleton)
+                                     zip gs (repeat ())
 
                 pair xs = zip xs (tail xs)
                 take_odd [x]      = [x]
@@ -1116,7 +1116,7 @@ spec_section_compliments =
         it "computes the ascending chain of large-ish compliments" $ do
                 let s  = section_from_list_unsafe
                     cs = section_compliments
-                    z  = Singleton
+                    z  = ()
 
                 let s1 =  s [(genA (0,1),0),(genA (2,3),1)]
                     s2 =  s [(genA (0,1),0),(genA (1,3),1)]
@@ -1124,8 +1124,8 @@ spec_section_compliments =
                 head (cs s1) @=? s [(genA (-2*inf,0),z),(genA (1,2),z),(genA (3,3+2*inf),z)]
                 head (cs s2) @=? s [(genA (-2*inf,0),z),(genA (3,3+2*inf),z)]
 
-gen_compliments :: HyperNum a => Generator a -> [Section a Singleton]
-gen_compliments g = section_compliments $ section_singleton (g,Singleton)
+gen_compliments :: HyperNum a => Generator a -> [Section a ()]
+gen_compliments g = section_compliments $ section_singleton (g,())
 
 
 -- Only meaningful for 1-dim

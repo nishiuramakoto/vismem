@@ -14,8 +14,6 @@ import qualified Data.IntervalMap.Interval as Interval
 -- for pretty printing without ghc extension
 import qualified Data.IntervalMap.Generic.Strict as StrictIntervalMap
 
-instance Pretty Singleton where
-        pp_level n x = text "(*)"
 
 instance Pretty a =>  Pretty (Interval a) where
         pp_level n (Interval.OpenInterval x y) = parens $ pp_level n x <> comma <>  pp_level n y

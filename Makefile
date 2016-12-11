@@ -54,7 +54,7 @@ STRACE_DATA          = strace.data
 # The name of the Haskell binary
 STRACE_PARSER_BIN    = strace_parser
 GHC                  = ghc
-GHCFLAGS             = -O # -DNDEBUG
+GHCFLAGS             = -O -DNDEBUG
 GHCFLAGS_PROF        = -prof -fprof-auto
 GHC_RTS              = +RTS -P -hc -RTS
 

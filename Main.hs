@@ -53,13 +53,17 @@ import qualified Data.Map as Map
 import Text.Regex
 import Text.Regex.PCRE
 
+import           Text.Parsec ((<|>))
+import qualified Text.Parsec as Parsec
+
 import GHC.Generics (Generic)
 import Control.DeepSeq
+import Control.Exception
 
 import System.Environment
 import System.Exit
 import System.IO
-
+import System.IO.Unsafe -- for our in-house hacky streaming IO
 
 {-
 ************************************************************************
@@ -78,11 +82,25 @@ data Strace =
         , strace_ret     :: SyscallRet
         , strace_stack   :: [StraceLine]
         }
+        | StraceError
+        { strace_tid     :: Integer
+        , strace_syscall :: String
+        , strace_args    :: SyscallArgs
+        , strace_ret     :: SyscallRet
+        , strace_err     :: String
+        , strace_stack   :: [StraceLine]
+        }
         | StraceExit
           { strace_tid       :: Integer
           , strace_exit_code :: Integer
           , strace_stack     :: [StraceLine]
           }
+        | StraceSignal
+          { strace_tid     :: Integer
+          , strace_signal  :: String
+          , strace_args    :: SyscallArgs
+          }
+
         deriving (Eq,Show, Generic, NFData)
 
 type SyscallArgs = [String]
@@ -133,6 +151,40 @@ data StraceLine =
             , sl_args   :: SyscallArgs
             }
           deriving (Eq,Show, Generic, NFData)
+
+-- might use RecordWildCards..
+is_syscall :: StraceLine -> Bool
+is_syscall (Syscall _ _ _ _) = True
+is_syscall _ = False
+
+is_syscall_error :: StraceLine -> Bool
+is_syscall_error (SyscallError _ _ _ _ _) = True
+is_syscall_error _ = False
+
+is_syscall_unfinished :: StraceLine -> Bool
+is_syscall_unfinished (SyscallUnfinished _ _ _) = True
+is_syscall_unfinished _ = False
+
+is_syscall_resumed :: StraceLine -> Bool
+is_syscall_resumed (SyscallResumed _ _ _ _) = True
+is_syscall_resumed _ = False
+
+is_syscall_resumed_error :: StraceLine -> Bool
+is_syscall_resumed_error (SyscallResumedError _ _ _ _ _) = True
+is_syscall_resumed_error _ = False
+
+is_stack_trace :: StraceLine -> Bool
+is_stack_trace (StackTrace _) = True
+is_stack_trace _ = False
+
+is_exit :: StraceLine -> Bool
+is_exit (Exit _ _) = True
+is_exit _ = False
+
+is_signal :: StraceLine -> Bool
+is_signal (Signal _ _ _) = True
+is_signal _ = False
+
 
 
 type Id           = Int
@@ -270,90 +322,161 @@ parse :: String -> [StraceLine]
 parse s = map parse_line (lines s)
 
 
-data StraceState = SS
-                   { ss_unfinished_map :: Map Tid StraceLine
-                   }
-                   deriving (Eq, Show, Generic, NFData)
-
-ss_empty = SS Map.empty
 
 -- |Id is used to identify stack straces
 strace_with_id :: [StraceLine] -> [(Id,Strace)]
-strace_with_id = zip [1..] . strace ss_empty
+strace_with_id = zip [1..] . strace
+
+-- lazy parser
+type StraceState = Map Tid StraceLine
+
+ss_empty = Map.empty :: StraceState
+
+type StraceStream    = [StraceLine]
+type ParseStrace     = Parsec.Parsec StraceStream StraceState
+type ParseStraceCont = ParseStrace (Maybe Strace, StraceStream, StraceState)
 
 strace :: [StraceLine] -> [Strace]
-strace  = catMaybes . map snd . scanl (*) (strace_begin ss_empty, Nothing)
+strace xs = catMaybes $
+            map result $
+            takeWhile continuing $
+            iterate strace1 (Right (Nothing, xs, ss_empty))
         where
-                (st, _) * l' = st l'
+                result (Right (a, _, _)) = a
+                result (Left err)        = error $ show err
+                continuing (Right (_, xs, _)) = not $ null xs
+                continuing (Left  err)        = True
 
--- |Construct a syscall history from the stream strace lines
-strace_begin :: StraceState -> StraceLine -> (StraceState, Maybe Strace)
-strace_begin st l@(Syscall tid syscall args ret) =
-        (ss_push l st, ss_last_trace st)
-        let (traces, rest') = trace_lines rest
-        in  (Strace tid syscall args ret traces) : strace st rest'
+strace1 :: Either Parsec.ParseError (Maybe Strace, StraceStream, StraceState)
+        -> Either Parsec.ParseError (Maybe Strace, StraceStream, StraceState)
+strace1 (Left err) = Left err
+strace1 (Right (_, xs, st)) =  Parsec.runParser parse_strace1 st "source" xs
 
-strace st (SyscallError _tid _syscall _args _ret _err: rest) =
-        let (_traces, rest') = trace_lines rest
-            -- Just skip errors atm
-        in  strace st rest'
+-- tokens
 
-strace st (SyscallUnfinished tid syscall args: rest) =
-        case search_resumed tid syscall rest
-        of
-                (SyscallResumed tid' syscall' args_rest ret', traces, rest') ->
-                        if tid == tid' && syscall == syscall'
-                        then
-                                (Strace tid syscall (args ++ args_rest) ret' traces) : strace st rest'
-                        else
-                                error $ "strace unfinished:" ++ show tid ++ show syscall
-                -- skip errors
-                (SyscallResumedError tid' syscall' args_rest ret' err, traces, rest') ->
-                        if tid == tid' && syscall == syscall'
-                        then
-                                strace st rest'
-                        else
-                                error $ "strace unfinished:" ++ show tid ++ show syscall
+instance Pretty Parsec.SourcePos where pp_level _ = text . show
 
-                _ ->            error $ "strace unfinished:" ++ show tid ++ show syscall
+just_if p x | p x = Just x
+            | otherwise = Nothing
 
-strace st (SyscallResumed tid syscall args_rest ret: rest) =
-        error $ "resumed without unfinished:" ++ show tid ++ syscall
-strace st (SyscallResumedError tid syscall args_rest ret err: rest) =
-        error $ "resumed without unfinished:" ++ show tid ++ syscall
-strace st (StackTrace call_stack: rest)               =
-        error $ "trace without syscall line:"
-        ++ show call_stack ++ (render $ pp_list $ map pp_strace_line $ take 30 rest)
+show_tok = render . pp
+test_tok p = just_if p
 
-strace st (Exit   tid status: rest)      =
-        let (traces, rest') = trace_lines rest
-        in  (StraceExit tid status traces) : strace st rest'
+pos_tok :: Parsec.SourcePos -> StraceLine -> StraceStream -> Parsec.SourcePos
+pos_tok pos x xs = Parsec.incSourceLine pos 1
 
-strace st (Signal tid signal args: rest) =
-        strace st rest
+define_token :: (StraceLine -> Bool) -> ParseStrace StraceLine
+define_token p = Parsec.tokenPrim show_tok pos_tok (test_tok p)
 
-strace st [] = []
+token_syscall :: ParseStrace StraceLine
+token_syscall = define_token is_syscall
+
+token_syscall_error :: ParseStrace StraceLine
+token_syscall_error = define_token is_syscall_error
+
+token_syscall_unfinished :: ParseStrace StraceLine
+token_syscall_unfinished = define_token is_syscall_unfinished
+
+token_syscall_resumed :: ParseStrace StraceLine
+token_syscall_resumed = define_token is_syscall_resumed
+
+token_syscall_resumed_error :: ParseStrace StraceLine
+token_syscall_resumed_error = define_token is_syscall_error
+
+token_trace :: ParseStrace StraceLine
+token_trace = define_token is_stack_trace
+
+token_exit :: ParseStrace StraceLine
+token_exit = define_token is_exit
+
+token_signal :: ParseStrace StraceLine
+token_signal = define_token is_signal
 
 
-trace_lines :: [StraceLine] -> ([StraceLine], [StraceLine])
-trace_lines = span is_stack_trace
-        where
-                is_stack_trace (StackTrace _) = True
-                is_stack_trace _              = False
+parse_strace1 :: ParseStraceCont
+parse_strace1 = parse_strace_syscall <|>
+                parse_strace_syscall_error <|>
+                parse_strace_syscall_unfinished <|>
+                parse_strace_syscall_resumed <|>
+                parse_strace_syscall_resumed_error <|>
+                parse_strace_exit <|>
+                parse_strace_signal
 
-search_resumed :: Integer -> String -> [StraceLine] -> (StraceLine, [StraceLine], [StraceLine])
-search_resumed tid syscall ls =
-        let  (xs, (r:ys))   = break (is_resumed tid syscall) ls
-             (traces, rest) = trace_lines ys
-        in
-                r `deepseq` traces `deepseq` xs `deepseq`
-                (r, traces, xs ++ rest)
-        where
-                is_resumed tid syscall (SyscallResumed tid' syscall' args_rest' ret') =
-                        tid == tid' && syscall == syscall'
-                is_resumed tid syscall (SyscallResumedError tid' syscall' args_rest' ret' err') =
-                        tid == tid' && syscall == syscall'
-                is_resumed tid syscall _ = False
+parser_return :: Maybe Strace -> ParseStraceCont
+parser_return x = do
+        input <- Parsec.getInput
+        st    <- Parsec.getState
+        return (x, input, st)
+
+assertM p = assert p $ return ()
+
+push_unfinished :: StraceLine -> ParseStrace ()
+push_unfinished l@(SyscallUnfinished tid syscall args) = do
+        st <- Parsec.getState
+        assertM (not $ Map.member tid st)
+        Parsec.putState $ Map.insert tid l st
+
+pop_unfinished :: Tid -> ParseStrace StraceLine
+pop_unfinished tid = do
+        st <- Parsec.getState
+        assertM (Map.member tid st)
+        return $ st ! tid
+
+
+parse_strace_syscall :: ParseStraceCont
+parse_strace_syscall = do
+        Syscall tid syscall args ret <- token_syscall
+        t <- parse_strace_trace
+        parser_return $ Just $ Strace tid syscall args ret t
+
+
+parse_strace_syscall_error :: ParseStraceCont
+parse_strace_syscall_error = do
+        SyscallError tid syscall args ret err <- token_syscall_error
+        t <- parse_strace_trace
+        parser_return $ Just $ StraceError tid syscall args ret err t
+
+
+parse_strace_syscall_unfinished :: ParseStraceCont
+parse_strace_syscall_unfinished = do
+        l@(SyscallUnfinished tid syscall args) <- token_syscall_unfinished
+        push_unfinished l
+        parser_return $ Nothing
+
+parse_strace_syscall_resumed :: ParseStraceCont
+parse_strace_syscall_resumed = do
+        SyscallResumed tid syscall args ret   <- token_syscall_resumed
+        t                                     <- parse_strace_trace
+        SyscallUnfinished tid' syscall' args' <- pop_unfinished tid
+        assertM (tid == tid' && syscall == syscall')
+        parser_return $ Just $ Strace tid syscall (args' ++ args) ret t
+
+
+parse_strace_syscall_resumed_error :: ParseStraceCont
+parse_strace_syscall_resumed_error = do
+        SyscallResumedError tid syscall args ret err <- token_syscall_resumed_error
+        t                                            <- parse_strace_trace
+        SyscallUnfinished tid' syscall' args'        <- pop_unfinished tid
+        assertM (tid == tid' && syscall == syscall')
+        parser_return $ Just $ StraceError tid syscall (args' ++ args) ret err t
+
+parse_strace_exit :: ParseStraceCont
+parse_strace_exit = do
+        Exit tid status   <- token_exit
+        t                                     <- parse_strace_trace
+        parser_return $ Just $ StraceExit tid status t
+
+parse_strace_signal :: ParseStraceCont
+parse_strace_signal = do
+        Signal tid signal args   <- token_signal
+        parser_return $ Just $ StraceSignal tid signal args
+
+
+parse_strace_trace :: ParseStrace [StraceLine]
+parse_strace_trace = Parsec.many token_trace
+
+
+
 
 dump_lines :: FilePath -> FilePath -> IO ()
 dump_lines i o = readFile i >>=
@@ -514,11 +637,26 @@ pp_trace (n, Strace tid syscall args ret trace) = int n <+> (escape trace_doc)
                 trace_doc   = vcat $ funcall : map text trace_lines
 
 
+pp_trace (n, StraceError tid syscall args ret err trace) = int n <+> (escape trace_doc)
+        where
+                args'       = hsep $ punctuate comma (map text args)
+                funcall     = integer tid <+> text syscall <> parens args' <+>
+                              equals <+> text ret <+> text err
+                trace_lines = map sl_call_stack trace
+                trace_doc   = vcat $ funcall : map text trace_lines
+
+
 pp_trace (n, StraceExit tid code trace) = int n <+> (escape trace_doc)
         where
                 funcall     = integer tid <+> text "exit"  <+> equals <+> integer code
                 trace_lines = map sl_call_stack trace
                 trace_doc   = vcat $ funcall : map text trace_lines
+
+pp_trace (n, StraceSignal tid signal args) = int n <+> (escape trace_doc)
+        where
+                args'       = hsep $ punctuate comma (map text args)
+                funcall     = integer tid <+> text "signal"  <+> equals <+> text signal <+> parens args'
+                trace_doc   = funcall
 
 
 pp_args :: SyscallArgs -> Doc
@@ -591,7 +729,7 @@ ps_contained_in g s  = area (g'/\s') == area g' &&
         where
                 x /\ y = section_lift2 const x y
                 area   = section_area
-                g'     = section_singleton (g, Singleton)
+                g'     = section_singleton (g, ())
                 s'     = ps_vm s
                 (a,b)  = from_gen g
                 std    = fromIntegral . hyper_std
@@ -802,7 +940,7 @@ ps_insert_vma g (prot,flags,fd,offset) trace s =
                           , vma_trace  = Just trace
                           }
 
-                g /\ s = section_lift2 const (ps_vm s) (section_singleton (g,Singleton))
+                g /\ s = section_lift2 const (ps_vm s) (section_singleton (g, ()))
 
 
 -- | 'Region' given may not intersect the section (in which case it's just a no-op)
@@ -921,6 +1059,12 @@ pt_action s (n, t@(Strace tid syscall args ret trace))
 
 pt_action s (n, t@(StraceExit tid code trace)) =
         pt_exit tid s code (n,t)
+
+-- skip
+pt_action s (n, t@(StraceError tid syscall args ret err trace)) = s
+pt_action s (n, t@(StraceSignal tid signal args)) = s
+
+
 
 
 ps_mmap :: PState -> SyscallArgs -> SyscallRet -> UniqueStrace -> PState
@@ -1239,13 +1383,56 @@ tee_progress id n xs =
 {-
 ************************************************************************
 *                                                                      *
-*              7. IO
+*              7. Lazy Stream IO
 *                                                                      *
 ************************************************************************
+
+
 -}
 
+-- The fundamental problem is that Haskell's idea of 'RealWorld' dependency (the assumption
+-- that it incrementally changes after each IO) doesn't necessarily reflect our common sense
+-- knowledge about the  particular system we need to deal with.
+--
+-- Consider, for example, emulating "git" where file system objects can essentially be assumed
+-- 'referentially transparent', i.e. the contents of the file can mostly be determined by its
+-- path and its commit time. In essense we have to model the true dependency of our IO based on
+-- the specific assumptions we are making; there can be no one-fits-all solution. In particular 'Iteratee'
+-- based solutions should not be assumed universally applicable; what we need is probably a custom OurIO
+-- for each application.
+--
+-- One possible way to cleanly model that kind of dependency might be the Grothendieck topology (again!)
+-- because clearly dependencies are 'stable under pullback' (that is, if X and Y depend on
+-- some assumption Z then the (strict) pair (X,Y) will also depend on Z, and it will be universal in the
+-- obvious sense.)
+-- Thus we can consider a 'sheaf on dependency', and an IO action on
+-- such a space would then be a section connecting two 'assumptions'
+-- (not necessarily points; probably  locales.)
+
+infixl 2 >>=~
+m >>=~ f =  do x <- m
+               unsafeInterleaveIO $ f x
+
+-- |- Assumption:
+-- each element in the resulting list depends on the deep evaluation of the previous element; but no more.
+-- (this is of course broken, just a quick hack)
+for_stream :: NFData b => [a] -> (a -> IO b) -> IO [b]
+for_stream [] f = return []
+for_stream (x:xs) f = do
+        y  <- f x
+        ys <- unsafeInterleaveIO $ go y xs
+        return (y:ys)
+
+        where
+                go y []     = y `deepseq` return []
+                go y (x:xs) = y `deepseq` do
+                        y' <- f x
+                        ys <- unsafeInterleaveIO $ go y' xs
+                        return (y':ys)
+
+
 render_line_to :: Handle -> Doc -> IO ()
-render_line_to h doc = hPutStrLn h $ render doc
+render_line_to h doc = hPutStrLn h $ myrender doc
 
 
 read_strace :: FilePath -> IO [UniqueStrace]
@@ -1281,38 +1468,83 @@ write_stack_trace file ts  = let header = text "trace_id trace"
                                      writeFile file $ render doc
 
 tee_stack_trace :: FilePath -> [UniqueStrace] -> IO [UniqueStrace]
-tee_stack_trace file xs =
-        withFile file WriteMode $ \h -> do
-                render_line_to h header
-                forM xs $ \x -> do
-                        write h x
-                        return x
+tee_stack_trace file xs = tee_to file pp (Nothing : map Just xs) >>=
+                          return . catMaybes
         where
-                forM = flip mapM
-                header = text "trace_id trace"
-                write h x = render_line_to h $ pp_trace x
+                pp Nothing  = text "trace_id trace"
+                pp (Just x) = pp_trace x
+
+tee_to :: (Pretty a, NFData a) => FilePath -> (a -> Doc) -> [a] -> IO [a]
+tee_to file pp xs = do
+        h <- openFile file WriteMode
+
+        let job = do print "closing handle..."
+                     hShow h >>= print
+                     hClose h
+                     hShow h >>= print
+                     print "handle closed!"
+            xs' = pair $ map Left xs ++ [Right job]
+
+        for_stream xs' (tee' h)
+
+        where
+                tee' h (Left x, Left x') = do  render_line_to h $ pp x
+                                               return x
+                tee' h (Left x, Right job) = do render_line_to h $ pp x
+                                                job
+                                                return x
+                pair xs = zip xs (tail xs)
+
+
+tee :: (Pretty a, NFData a) => (a -> Doc) -> [a] -> IO [a]
+tee pp xs = for_stream xs $ \x -> do
+        render_line_to stdout $ pp x
+        return x
 
 
 
-tee :: (IO (a -> IO ())) -> [a] -> IO [a]
-tee m xs = do f <- m
-              flip mapM xs $ \x -> f x >> return x
 
+-- Show line number and pass input through
+-- man nl(1)
+nl :: (Pretty a, NFData a) => [a] -> IO [a]
+nl xs = return (zip [1..]  xs) >>=
+        tee (int . fst) >>=
+        return . map snd
+
+nl_format :: (Pretty a, NFData a) => ((Int,a) -> Doc) -> [a] -> IO [a]
+nl_format pp xs = return (zip [1..]  xs) >>=
+                  tee pp                 >>=
+                  return . map snd
+
+nl_label label = nl_format (\(n,_) -> text $ printf "%s:%d" label n)
+
+wc :: FilePath -> IO Int
+wc file = readFile file >>=
+          return . lines >>=
+          return . force . length
 
 dump :: FilePath -> FilePath -> FilePath -> IO ()
-dump strace_in frame_out trace_out =
-        read_strace strace_in       >>=
-        tee_stack_trace trace_out   >>=
-        return . map force          >>=
-        return . emulate_vm         >>=
-        return . map force          >>=
-        return . summarize          >>=
-        return . map force          >>=
-        write_data_frame frame_out
+dump strace_in frame_out trace_out = do
+        ln <- wc strace_in
+        (
+                readFile strace_in   >>=
+                return . parse              >>=
+                nl_format (\(n,x) -> text $ printf "line:%d/%d" n ln)    >>=
+                return . strace_with_id     >>=
+                nl_label "stace"            >>=
+                tee_stack_trace trace_out   >>=
+                nl_label "tee_stack_trace"  >>=
+                return . emulate_vm         >>=
+                nl_label "emulate_vm"       >>=
+                return . summarize          >>=
+                nl_label "summarize"        >>=
+                write_data_frame frame_out
+                )
 
         where
                 summarize xs = snapshot 1000 $ hyper_take inf xs
                 --summarize = assert' "valid" (all pt_valid) . snapshot 1000
+                finish xs = render_line_to stdout (pp_brief $ last xs)
 
 dump' :: FilePath -> FilePath -> FilePath -> IO ()
 dump' strace_in frame_out trace_out =
@@ -1320,8 +1552,14 @@ dump' strace_in frame_out trace_out =
         return . parse >>=
         return . map force >>=
         return . strace_with_id >>=
-        mapM_ (render_line_to stdout . pp_trace)
-
+        return . emulate_vm >>=
+        return . summarize >>=
+        return . zip [1..] >>=
+        return . map force >>=
+        tee  (int . fst) >>=
+        const (return ())
+        where
+                summarize xs = snapshot 500 $ hyper_take 5000 xs
 
 
 
