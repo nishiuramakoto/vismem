@@ -3,6 +3,7 @@
 (Not cabalized yet)
 
 Synopsis:
+
     $ make show-prerequisites
 	$ # Install prerequisites
     $ sudo apt-get install  libunwind8-dev libpcre3-dev r-base r-cran-ggplot2 r-cran-cluster
@@ -20,3 +21,6 @@ Synopsis:
     Listening on http://127.0.0.1:5000
 	....
 	$ firefox http://127.0.0.1:5000
+
+
+Now you can click a region to show stack traces that are responsible for state of the region.
