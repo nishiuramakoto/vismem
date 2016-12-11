@@ -2,7 +2,7 @@
 
 (Not cabalized yet)
 
-![alt screenshot](https://github.com/nishiuramakoto/vismem/blob/master/img/screenshot.png)
+![alt screenshot](https://github.com/nishiuramakoto/vismem/blob/master/img/screenshot.jpg)
 
 ## Synopsis
 
@@ -52,4 +52,4 @@
 2. Traces for munmap are not currently shown.
 3. Current Sheaf module only supports 1-dimensional space, leading to
    huge inefficiency.
-4. --quite switch may be needed
+4. --quite switch may be desired
