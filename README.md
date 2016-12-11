@@ -1,4 +1,4 @@
-# Vismem: A Linux 64-bit VM emulator
+# Vismem: A Linux VM visualizer
 
 (Not cabalized yet)
 
