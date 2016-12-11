@@ -2,6 +2,8 @@
 
 (Not cabalized yet)
 
+[[https://github.com/nishiuramakoto/vismem/blob/master/img/screenshot.png|alt=screenshot]]
+
 Synopsis:
 
     $ make show-prerequisites
