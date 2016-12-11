@@ -75,6 +75,14 @@ disjoint.intervals <- function(mmap) {
     return(disivs)
 }
 
+find.next <- function(t) {
+    u <- unique(sort(t))
+    i <- findInterval(t,u)
+    l <- length(u)
+    v <- c(u,u[l] + u[l]-u[l-1])
+    return(v[i+1])
+}
+
 # Add cluster numbers sorted according to the base address
 mmap.cluster <- function(mmap, B=100) {
     ivs <- disjoint.intervals(mmap)
@@ -87,11 +95,15 @@ mmap.cluster <- function(mmap, B=100) {
     cluster.perm    <- match(1:nc, order(-representatives))
     cluster.sorted  <- cluster.perm[fit$cluster]
 
-    #from.cluster    <- cluster.sorted[match(mmap$from, ps)]
+    # from.cluster    <- cluster.sorted[match(mmap$from, ps)]
     from.cluster    <- cluster.sorted[findInterval(mmap$from,ps)]
+
+    # time slice
+    dt <- find.next(mmap$t) - mmap$t
 
     mmap.clus <- data.frame(
         t        = mmap$t,
+        dt       = dt,
         from     = mmap$from,
         to       = mmap$to,
         v        = mmap$v,
@@ -127,18 +139,11 @@ myplot.cluster <- function(frame, labeller = "label_value") {
     return(ret)
 }
 
-find.next <- function(t) {
-    u <- sort(unique(t))
-    i <- findInterval(t,u)
-    l <- length(u)
-    v <- c(u,u[l] + u[l]-u[l-1])
-    return(v[i+1])
-}
 
 # Plot without cluster info
 myplot <- function(frame) {
 
-    g <- ggplot(frame, aes(x=t, y=from, xmin= t, xmax = find.next(t), ymin = from, ymax = to, fill=v)) +
+    g <- ggplot(frame, aes(x=t, y=from, xmin= t, xmax = t+dt, ymin = from, ymax = to, fill=v)) +
         geom_rect()
 
     ret <- g +
@@ -186,9 +191,7 @@ find.trace.pid <- function(g, pid) {
 
 find.trace_id <- function(mmap, t, p) {
     cat("t=",t,"\np=",p,"\n")
-    matched <- mmap[mmap$from <= p & p < mmap$to , ]
-    dt      <- c(diff(matched$t),0)
-    matched <- matched[matched$t <= t & t < matched$t + dt,]
+    matched <- mmap[mmap$t <= t & t < mmap$t + mmap$dt & mmap$from <= p & p < mmap$to , ]
     print(matched)
     return(matched$trace_id[1])
 }

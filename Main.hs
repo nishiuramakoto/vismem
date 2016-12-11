@@ -1299,12 +1299,8 @@ snapshot n xs
         | otherwise = every (ceiling (len xs / n)) xs
         where len = fromIntegral . length
 
-every n xs
-        | n <= 0    = error message
-        | otherwise = map head' $ chunksOf n xs
-        where
-                head'   = head . assert' message  (not . null)
-                message = printf "every:%d:%s" n (show $ take 10 xs)
+every n [] = []
+every n (x:xs) = x: every n (drop (n-1) xs)
 
 
 (><) :: Monad m => (c -> m a) -> (c -> m b) -> (c -> m (a,b))
@@ -1462,6 +1458,13 @@ write_data_frame_to_handle ss h = put_header h >> go ss
                 put_data h s = render_line_to h $ pp_pt_data_frame s
 
 
+tee_data_frame :: FilePath -> [PTState] -> IO [PTState]
+tee_data_frame file xs = tee_to file pp (Nothing : map Just xs) >>=
+                         return . catMaybes
+        where
+                pp Nothing  = pp_data_frame_header
+                pp (Just x) = pp_pt_data_frame x
+
 
 write_stack_trace :: FilePath -> [UniqueStrace] -> IO ()
 write_stack_trace file ts  = let header = text "trace_id trace"
@@ -1481,11 +1484,11 @@ tee_to :: (Pretty a, NFData a) => FilePath -> (a -> Doc) -> [a] -> IO [a]
 tee_to file pp xs = do
         h <- openFile file WriteMode
 
-        let job = do print "closing handle..."
+        let job = do info  "closing handle..."
                      hShow h >>= print
                      hClose h
-                     hShow h >>= print
-                     print "handle closed!"
+                     hShow h >>= info
+                     info "handle closed!"
             xs' = pair $ map Left xs ++ [Right job]
 
         for_stream xs' (tee' h)
@@ -1498,6 +1501,7 @@ tee_to file pp xs = do
                                                 return x
                 pair xs = zip xs (tail xs)
 
+                info = hPutStrLn stderr
 
 tee :: (Pretty a, NFData a) => Handle -> (a -> Doc) -> [a] -> IO [a]
 tee h pp xs = for_stream xs $ \x -> do
@@ -1533,26 +1537,31 @@ dump strace_in frame_out trace_out = do
                   return . parse           >>=
                   nl "line"                >>=
                   return . strace_with_id  >>=
-                  nl "strace"
+                  nl "strace"              >>=
+                  tee_stack_trace trace_out  >>=
+                  nl "tee_stack_trace"
 
         let tn = length traces
-        let nl name = nl_format stderr (label name tn)
+            k  = max 1 (tn `div` sample_size)
+            nl  name = nl_format stderr (label name tn)
+            nl' name = nl_format stderr (label name sample_size)
 
         () <- return traces              >>=
-              tee_stack_trace trace_out  >>=
-              nl "tee_stack_trace"       >>=
               return . emulate_vm        >>=
               nl "emulate_vm"            >>=
-              return . summarize tn      >>=
-              nl "summarize"             >>=
-              write_data_frame frame_out
+              return . every k           >>=
+              nl' "summarize"            >>=
+              tee_data_frame frame_out   >>=
+              nl' "tee_data_frame"       >>=
+              finish
+              --write_data_frame frame_out
 
         return ()
 
         where
+                sample_size = 1000
                 label name m (n,x) = text $ printf "%s:%d/%d" name n m
-
-                summarize n xs = every (max 1 (n `div` 1000)) xs
+                finish xs = putStrLn $ printf "%d frames written" $ length xs
                 --summarize = assert' "valid" (all pt_valid) . snapshot 1000
 
 
