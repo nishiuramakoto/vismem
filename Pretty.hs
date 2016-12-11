@@ -1,4 +1,3 @@
--- |Rule of the game: never require fancy extensions
 module Pretty(
         Pretty(..),
         Hex,

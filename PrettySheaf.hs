@@ -1,4 +1,4 @@
-module PrettySheaf
+module PrettySheaf()
        where
 
 import Pretty
