@@ -286,7 +286,10 @@ Intuitively, it should be obvious, it's a sheaf of 'locally constant' functions 
 == 5. Construction of Constant Sheaves
 
 The goal of this section is to give an explicit, constructive description of constant sheaves
-on arbitrary site.
+on arbitrary site. The simpler but non-constructive description
+ΔS≃∐Δ1
+    S
+will not be of much use for our computing purposes.
 
 WARNING:
   Careful, this is my own. You'll find mistakes!
