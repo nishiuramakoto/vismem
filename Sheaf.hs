@@ -1503,22 +1503,17 @@ section_lift2_partial (*) s t =
                 precondition      = section_valid s && section_valid t
                 postcondition u   = section_valid u
 
-                u = section_from_list_unsafe $
-                    concat            $
-                    map (apply (*))   $
-                    map (s /\)        $
-                    section_to_asc_list t -- @tbd slow, do bisecting
+                u | s `section_smaller_unsafe` t = lift2 (flip (*)) t s
+                  | otherwise = lift2 (*) s t
 
-                s /\ (g,x) = let (local, other) = section_split_at_unsafe g s
-                             in  zip (section_to_asc_list local) (repeat (g,x))
+                lift2 (**) x y = foldl' section_glue_unsafe section_empty $
+                                 map (apply (**)) $
+                                 map (x /\ )      $
+                                 section_to_asc_list y -- @tbd slow, do bisecting
 
-                apply (*) gs = let process ((g,x),(h,y)) = listify (g/\h) (x*y)
-                                   listify _ Nothing     = []
-                                   listify g (Just x) | gen_null g = []
-                                                      | otherwise  = [(g,x)]
-                                   (/\)  = gen_intersection
+                s /\ (g,y) = (section_restrict_at g s, y)
 
-                               in concat $ map process gs
+                apply (**) (s,y) = section_lift1_partial (**y) s
 
 
 spec_section_lift2_partial =

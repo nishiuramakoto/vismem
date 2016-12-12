@@ -1075,9 +1075,9 @@ ps_update_vma g update s =
                 t  = let f vm = (g' \\ vm) \/ (vm /\ g') \/ (vm \\ g')
                      in  ps_act_vm f s
 
-                x \\ y = x `vm_diff` y
-                x \/ y = fromJust $ section_glue x y
-                x /\ y = section_lift2 (\x y -> update x) x y
+                x \\ y =  x `vm_diff` y
+                x \/ y =  fromJust $ section_glue x y
+                x /\ y =  section_lift2 (\x y -> update x) x y
 
 
 -- |See mprotect(2)
@@ -1490,7 +1490,7 @@ m >>=~ f =  do x <- m
                unsafeInterleaveIO $ f x
 
 -- |- Assumption:
--- each element in the resulting list depends on the deep evaluation of the previous element, but no more.
+-- each element in the resulting list depends on the shallow evaluation of the previous element, but no more.
 -- (this is of course broken, just a quick hack)
 for_stream :: NFData b => [a] -> (a -> IO b) -> IO [b]
 for_stream [] f = return []
@@ -1500,8 +1500,8 @@ for_stream (x:xs) f = do
         return (y:ys)
 
         where
-                go y []     = y `deepseq` return []
-                go y (x:xs) = y `deepseq` do
+                go y []     = y `seq` return []
+                go y (x:xs) = y `seq` do
                         y' <- f x
                         ys <- unsafeInterleaveIO $ go y' xs
                         return (y':ys)
