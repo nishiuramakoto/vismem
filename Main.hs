@@ -100,6 +100,7 @@ data Strace =
 
         deriving (Eq,Show, Generic, NFData)
 
+
 type SyscallArgs = [String]
 type SyscallRet  = String
 
@@ -336,19 +337,22 @@ type ParseStraceCont = ParseStrace (Maybe Strace, StraceStream, StraceState)
 strace :: [StraceLine] -> [Strace]
 strace xs = catMaybes $
             map result $
-            takeWhile continuing $
+            takeWhile (not . eof) $
             iterate strace1 (Right (Nothing, xs, ss_empty))
         where
                 result (Right (a, _, _)) = a
                 result (Left err)        = error $ show err
 
-                continuing (Right (_, xs, _)) = not $ null xs
-                continuing (Left  err)        = True
+                eof (Right (Nothing, [], _)) = True
+                eof _ = False
 
 strace1 :: Either Parsec.ParseError (Maybe Strace, StraceStream, StraceState)
         -> Either Parsec.ParseError (Maybe Strace, StraceStream, StraceState)
 strace1 (Left err) = Left err
-strace1 (Right (_, xs, st)) =  Parsec.runParser parse_strace1 st "source" xs
+strace1 (Right (_, xs, st)) =  Parsec.runParser (parse_strace1 <|> eof) st "source" xs
+        where
+                eof = do Parsec.eof
+                         parser_return Nothing
 
 -- tokens
 
@@ -490,23 +494,39 @@ dump_strace i o = readFile i >>=
 
 
 strace_is_exec :: Strace  -> Bool
-strace_is_exec strace = strace_syscall strace =~ "^exec"
+strace_is_exec (Strace _ syscall _ _ _) = syscall =~ "^exec"
+strace_is_exec _  = False
+
 -- vm not shared
 strace_is_clone_process :: Strace -> Bool
-strace_is_clone_process  strace = strace_syscall strace =~ "^clone" &&
-                                  not (any (=~ "CLONE_VM") (strace_args strace))
+strace_is_clone_process  strace@(Strace _ _ _ _ _) =
+        strace_syscall strace =~ "^clone" &&
+        not (any (=~ "CLONE_VM") (strace_args strace))
+strace_is_clone_process _ = False
+
 -- vm shared
 strace_is_clone_thread :: Strace -> Bool
-strace_is_clone_thread   strace = strace_syscall strace =~ "^clone" &&
-                                  any (=~ "CLONE_VM") (strace_args strace)
-
+strace_is_clone_thread   strace@(Strace _ _ _ _ _) =
+        strace_syscall strace =~ "^clone" &&
+        any (=~ "CLONE_VM") (strace_args strace)
+strace_is_clone_thread _ = False
 
 strace_is_wait :: Strace -> Bool
-strace_is_wait strace = strace_syscall strace =~ "^wait"
+strace_is_wait strace@(Strace _ _ _ _ _) =
+        strace_syscall strace =~ "^wait"
+strace_is_wait _ = False
 
 strace_is_exit :: Strace -> Bool
 strace_is_exit (StraceExit _ _ _) = True
 strace_is_exit _ = False
+
+strace_is_error :: Strace -> Bool
+strace_is_error (StraceError _ _ _ _ _ _) = True
+strace_is_error _ = False
+
+strace_is_signal :: Strace -> Bool
+strace_is_signal (StraceSignal _ _ _) = True
+strace_is_signal _ = False
 
 
 
@@ -570,10 +590,19 @@ pp_strace = pp_strace_level inf
 
 pp_strace_level :: Hyper Integer -> Strace -> Doc
 pp_strace_level n (Strace tid syscall args ret trace) =
-        integer tid <+> text syscall <> parens (f args) <+> text "=" <+> text ret $$
-        nest 5 (pp_level n (map (text . sl_call_stack) trace))
-        where
-                f = sep . punctuate comma . map text
+        integer tid <+> text syscall <> pp_args args <+> text "=" <+> text ret $$
+        vcat_level n (map (text . sl_call_stack) trace)
+
+pp_strace_level n (StraceError tid syscall args ret err trace) =
+        integer tid <+> text syscall <> pp_args args <+> text "=" <+> text ret <+> text err $$
+        vcat_level n (map (text . sl_call_stack) trace)
+
+pp_strace_level n (StraceExit tid code trace) =
+         integer tid <+> text "exit"  <+> equals <+> integer code $$
+         vcat_level n (map (text . sl_call_stack) trace)
+
+pp_strace_level n (StraceSignal tid signal args) =
+        integer tid <+> text "signal"  <+> equals <+> text signal <+> pp_args args
 
 
 pp_data_frame_header = text "t pid from to v trace_id"
@@ -621,44 +650,78 @@ escape_fix_regex = mkRegex $ bs ++ bs ++ bs ++ dq
                 dq = "\""
 
 escape :: Doc -> Doc
-escape s    = text $ bugfix $ show $ render s
+escape s    = text $ bugfix $ show $ render_left s
         where
                 bugfix :: String -> String
                 bugfix s = subRegex escape_fix_regex s "''"
 
+{- | The fields are as follows:
+1. trace_id:     The unique ID of the trace
+2. t:            The time of the trace
+3. pid:          The pid that the tid belongs to
+4. tid:          The tid of the trace
+5. success:      1:Success 0:Error
+6. child_pid:    the child pid if cloning a process, or 0 otherwise
+7. syscall:      1:exec* 2:clone_process  0:others
+7. trace:        The escaped string of the stack trace
+-}
+pp_trace_header :: Doc
+pp_trace_header = text "trace_id t pid tid success child_pid syscall trace"
 
-pp_trace ::  UniqueStrace -> Doc
-pp_trace (n, Strace tid syscall args ret trace) = int n <+> integer tid <+> (escape trace_doc)
+data TraceDataFrame = TD
+                      { td_trace_id :: Int
+                      , td_t        :: Timestamp
+                      , td_tid      :: Tid
+                      , td_success  :: Bool
+                      , td_syscall  :: Strace
+                      }
+                      deriving (Eq,Show)
+
+pp_trace_generic :: PTState -> TraceDataFrame -> Doc
+pp_trace_generic pt (TD trace_id t tid success strace) =
+        pp trace_id <+> pp t <+> pp pid <+> pp tid <+> success' <+> child_pid <+> syscall <+> trace
         where
-                args'       = hsep $ punctuate comma (map text args)
-                funcall     = integer tid <+> text syscall <> parens args' <+> equals <+> text ret
-                trace_lines = map sl_call_stack trace
-                trace_doc   = vcat $ funcall : map text trace_lines
+                pid = pt_pid tid pt
+                success' | success   = int 1
+                         | otherwise = int 0
+
+                trace = escape (pp t <+> pp strace)
+
+                child_pid | strace_is_clone_process strace = integer $ read $ strace_ret strace
+                          | otherwise                      = int 0
+
+                syscall = pp $ syscall_code strace
+
+syscall_code :: Strace -> Int
+syscall_code trace | strace_is_exec   trace =  1
+                      | strace_is_clone_process trace = 2
+                      | strace_is_exit   trace = 3
+                      | strace_is_signal trace = 4
+                      | otherwise            =  0
+
+pp_trace ::  (PTState, UniqueStrace) -> Doc
+pp_trace (pt, (n, t)) | not (pt_member (strace_tid t) pt) =
+                        pp_error $ text "pp_trace" $$ pp (pp t, pp_brief pt)
+
+-- Just use time=n for the moment
+pp_trace (pt, (n, t@(Strace tid syscall args ret trace))) =
+        pp_trace_generic pt (TD n time tid True t)
+        where time = fromIntegral n
+
+pp_trace (pt, (n, t@(StraceError tid syscall args ret err trace))) =
+        pp_trace_generic pt (TD n time tid False t)
+        where time = fromIntegral n
+
+pp_trace (pt, (n, t@(StraceExit tid code trace))) =
+        pp_trace_generic pt (TD n time tid True t)
+        where time = fromIntegral n
+
+pp_trace (pt, (n, t@(StraceSignal tid signal args))) =
+        pp_trace_generic pt (TD n time tid True t)
+        where time = fromIntegral n
 
 
-pp_trace (n, StraceError tid syscall args ret err trace) = int n <+> integer tid <+> (escape trace_doc)
-        where
-                args'       = hsep $ punctuate comma (map text args)
-                funcall     = integer tid <+> text syscall <> parens args' <+>
-                              equals <+> text ret <+> text err
-                trace_lines = map sl_call_stack trace
-                trace_doc   = vcat $ funcall : map text trace_lines
-
-
-pp_trace (n, StraceExit tid code trace) = int n <+> integer tid <+> (escape trace_doc)
-        where
-                funcall     = integer tid <+> text "exit"  <+> equals <+> integer code
-                trace_lines = map sl_call_stack trace
-                trace_doc   = vcat $ funcall : map text trace_lines
-
-pp_trace (n, StraceSignal tid signal args) = int n <+> integer tid <+> (escape trace_doc)
-        where
-                args'       = hsep $ punctuate comma (map text args)
-                funcall     = integer tid <+> text "signal"  <+> equals <+> text signal <+> parens args'
-                trace_doc   = funcall
-
-
-pp_args :: SyscallArgs -> Doc
+pp_args :: [String] -> Doc
 pp_args xs = pp_tuple $ map text xs
 
 
@@ -751,6 +814,9 @@ data ProcessTreeState = PTState
 
 type PTState = ProcessTreeState
 
+pt_num_processes :: PTState -> Int
+pt_num_processes pt = Map.size $ pt_ps_map pt
+
 pt_valid :: PTState -> Bool
 pt_valid (PTState { pt_ps_map = ps_map, pt_tid_map = tid_map, pt_pid_ref = ref_map }) =
         all is_valid_pid $ map_values tid_map
@@ -785,8 +851,8 @@ pt_singleton (n, strace) =
 pp_pt_head s = text $ show $ Map.toAscList (pt_ps_map s)
 
 (.!) :: PTState -> Tid -> PState
-s .! tid = with_invariant (printf "%s .! %d" (render $ pp_pt_head s) tid)
-           (pt_member tid s)
+s .! tid = with_invariant (report "(.!)" (tid, pp_brief s))
+           (Map.member tid (pt_tid_map s) && Map.member (pt_tid_map s ! tid) (pt_ps_map s))
            (const True)
            $ pt_ps_map s ! (pt_tid_map s ! tid)
 
@@ -795,6 +861,9 @@ pt_member tid (PTState ps_map tid_map ref_map stamp) =
         case Map.lookup tid tid_map of
         Just pid -> Map.member pid ps_map && Map.member pid ref_map
         Nothing  -> False
+
+pt_pid :: Tid -> PTState -> Pid
+pt_pid tid pt = ps_pid $ pt .! tid
 
 pt_intersects :: Tid -> Region -> PTState -> Bool
 pt_intersects tid region s = pt_member tid s  && ps_intersects region (s .! tid)
@@ -861,20 +930,28 @@ pt_insert_process child_pid parent_pid strace s =
 pt_update_time :: Timestamp -> PTState -> PTState
 pt_update_time t s = s { pt_timestamp = t}
 
+zip_safe [] [] = []
+zip_safe (x:xs) (y:ys) = (x,y):zip_safe xs ys
+
 -- |Main VM emulator function
-emulate_vm :: [(Id,Strace)] -> [PTState]
+--  strace object is returned to annotate trace
+-- A process state may not correspond to a tracable syscall
+emulate_vm :: [UniqueStrace] -> [(PTState, Maybe UniqueStrace)]
 emulate_vm syscalls =
         with_invariant (printf "emulate_vm:%s" (show $ take 10 syscalls))
         precondition
         postcondition
-        $ scanl action (pt_singleton (head syscalls)) (tail syscalls)
+        $ zip_safe (s0:s) (map Just syscalls ++ [Nothing]) -- syscalls are not annotated currently
 
         where
-                precondition    = length syscalls > 0
-                postcondition s = length s > 0
+                precondition     = not (null syscalls)
+                postcondition ss = not (null ss)
 
-                action s (n,syscall) = let t = fromIntegral n -- @tbd: use genuine timestamp
-                                       in  pt_update_time t $ pt_action s (n,syscall) :: PTState
+                s0 = pt_singleton (head syscalls)
+                s  = scanl (<*)  s0 (tail syscalls)
+
+                s <*  (n,syscall) = let t = fromIntegral n -- @tbd: use genuine timestamp
+                                    in  pt_update_time t $ pt_action s (n,syscall) :: PTState
 
 
 
@@ -1080,7 +1157,7 @@ ps_brk :: PState -> SyscallArgs -> SyscallRet -> UniqueStrace -> PState
 ps_brk s [_] ret trace = ps_insert_vma (region base len) ("", "", "", "") trace s
         where
                 addr = read ret :: Integer
-                base = addr - len
+                base = max 4096 (addr - len)
                 len  = 30 * 2^20 -- heuristic
 
 
@@ -1155,10 +1232,10 @@ ps_msync s [addr, len, flags] ret trace =
 
 pt_exec :: Tid -> PTState -> SyscallArgs -> SyscallRet -> UniqueStrace -> PTState
 pt_exec tid s args ret trace =
-        with_invariant (report "pt_exec" (pp trace, pp_summary s))
-        precondition
-        postcondition
-        t
+          with_invariant (report "pt_exec" (pp trace, pp_summary s))
+          precondition
+          postcondition
+          t
         where
                 precondition    = pt_member tid s && tid == strace_tid (snd trace) && ret == "0"
                 postcondition s = pt_member tid s && ps_null_vm (s .! tid)
@@ -1228,8 +1305,8 @@ pt_exit tid s exit_code strace =
         postcondition
         $ pt_delete_thread tid exit_code strace s
         where
-                precondition    = strace_is_exit $ snd strace
-                postcondition t = pt_valid t
+                precondition    = strace_is_exit (snd strace)
+                postcondition t = not (pt_member tid t)
 
 
 
@@ -1250,7 +1327,8 @@ pt_delete_thread tid code strace s =
         postcondition
         t
         where
-                precondition = pt_member tid s && count > 0
+                precondition    = warn (printf "pt_delete_thread:(pid,count)=(%d,%d)" pid count) $
+                                  pt_member tid s && count > 0
                 postcondition s = not $ pt_member tid s
 
                 psmap   = pt_ps_map s
@@ -1321,22 +1399,23 @@ every n (x:xs) = x: every n (drop (n-1) xs)
 
 
 test_memst :: IO ()
-test_memst =  readFile test_file                         >>=
-              return . parse                             >>=
-              return . strace_with_id                    >>=
-              return . emulate_vm                       >>=
-              return . snapshot 100                      >>=
-              return . take 10                           >>=
+test_memst =  readFile test_file             >>=
+              return . parse                 >>=
+              return . strace_with_id        >>=
+              return . emulate_vm            >>=
+              return . snapshot 100          >>=
+              return . take 10               >>=
               putStrLn . render . pp_list . map (text . show)
 
 
 test_matrix :: IO ()
-test_matrix =  readFile test_file                         >>=
-               return . parse                             >>=
-               return . strace_with_id                    >>=
-               return . emulate_vm                       >>=
-               return . snapshot 100                      >>=
-               return . take 10                           >>=
+test_matrix =  readFile test_file            >>=
+               return . parse                >>=
+               return . strace_with_id       >>=
+               return . emulate_vm           >>=
+               return . snapshot 100         >>=
+               return . take 10              >>=
+               return . map fst              >>=
                putStrLn . render . pp_data_frame
 
 
@@ -1387,7 +1466,8 @@ tee_progress id n xs =
 -}
 
 -- The fundamental problem is that Haskell's idea of 'RealWorld' dependency (the assumption
--- that it incrementally changes after each IO) doesn't necessarily reflect our common sense
+-- that it incrementally changes after each IO, or in other words the assumption that the RealWorld
+-- is modeled by a free monoidal actions) doesn't necessarily reflect our common sense
 -- knowledge about the  particular system we need to deal with.
 --
 -- Consider, for example, emulating "make" where file system objects can partially be assumed
@@ -1517,20 +1597,31 @@ tee_data_frame file xs = tee_to file pp (Nothing : map Just xs) >>=
                 pp (Just x) = pp_pt_data_frame x
 
 
-write_stack_trace :: FilePath -> [UniqueStrace] -> IO ()
-write_stack_trace file ts  = let header = text "trace_id trace"
-                                 body   = vcat (map pp_trace ts)
-                                 doc    = header $$ body
+write_stack_trace :: FilePath -> [(PTState,UniqueStrace)] -> IO ()
+write_stack_trace file ts  = let body   = vcat (map pp_trace ts)
+                                 doc    = pp_trace_header $$ body
                              in
                                      writeFile file $ render doc
 
-tee_stack_trace :: FilePath -> [UniqueStrace] -> IO [UniqueStrace]
+tee_stack_trace :: FilePath -> [(PTState, Maybe UniqueStrace)] -> IO [(PTState, Maybe UniqueStrace)]
 tee_stack_trace file xs = tee_to file pp (Nothing : map Just xs) >>=
                           return . catMaybes
         where
-                pp Nothing  = text "trace_id pid trace"
-                pp (Just x) = pp_trace x
+                pp :: Maybe (PTState, Maybe UniqueStrace) -> Doc
+                pp Nothing  = pp_trace_header
+                pp (Just (pt,Just t)) = pp_trace (pt,t)
+                pp (Just (pt, Nothing)) = pp_empty
 
+
+pp_status_line :: (PTState, Maybe UniqueStrace) -> Doc
+pp_status_line (pt, Nothing)   = text "status:<empty trace>" $$ pp pt
+pp_status_line (pt,Just (n,t)) =
+        text $ render_left $ text "status" <:> id <:> num_process <:> trace_summary
+        where
+                x <:> y = x <> text ":" <> y
+                id = pp n
+                num_process   = int $ pt_num_processes pt
+                trace_summary = pp_level 0 t
 
 dump :: FilePath -> FilePath -> FilePath -> IO ()
 dump strace_in frame_out trace_out = do
@@ -1542,8 +1633,7 @@ dump strace_in frame_out trace_out = do
                   nl "line"                >>=
                   return . strace_with_id  >>=
                   nl "strace"              >>=
-                  tee_stack_trace trace_out  >>=
-                  nl "tee_stack_trace"
+                  return
 
         let tn = length traces
             k  = max 1 (tn `div` sample_size)
@@ -1553,6 +1643,10 @@ dump strace_in frame_out trace_out = do
         () <- return traces              >>=
               return . emulate_vm        >>=
               nl "emulate_vm"            >>=
+              tee stderr pp_status_line  >>=
+              tee_stack_trace trace_out  >>=
+              nl "tee_stack_trace"       >>=
+              return . map fst           >>=
               return . every k           >>=
               nl' "summarize"            >>=
               tee_data_frame frame_out   >>=

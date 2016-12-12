@@ -65,7 +65,7 @@ FRAME_DATA           = frame.data
 TRACE_DATA           = trace.data
 
 # What gets cleaned
-CLEAN_FILES      = $(STRACE_PARSER_BIN) spec_Sheaf.hs spec_Hyper.hs screenshot.jpg
+CLEAN_FILES      = $(BUILD_DIR)/$(STRACE_PARSER_BIN) spec_Sheaf.hs spec_Hyper.hs screenshot.jpg
 CLEAN_PATHS      = $(BUILD_DIR)
 DIST_CLEAN_FILES = $(DATA_DIR)/$(STRACE_DATA) $(DATA_DIR)/$(FRAME_DATA) $(DATA_DIR)/$(TRACE_DATA)
 DIST_CLEAN_PATHS = $(DATA_DIR)

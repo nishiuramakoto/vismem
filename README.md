@@ -48,8 +48,9 @@
 
 
 ## TODO
-1. So slow.. should be like 100x faster.
-2. Traces for munmap are not currently shown.
-3. Current Sheaf module only supports 1-dimensional space, leading to
+1. Replace tested function names to camelCase
+2. So slow.. should be like 100x faster.
+3. Traces for munmap are not currently shown.
+4. Current Sheaf module only supports 1-dimensional space, leading to
    huge inefficiency.
-4. --quite switch may be desired
+5. --quite switch may be desired

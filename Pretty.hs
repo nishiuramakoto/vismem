@@ -4,9 +4,12 @@ module Pretty(
         Monomial,
         mystyle,
         myrender,
+        render_left,
         report,
         report_full,
+        vcat_level,
         monomials,
+        pp_empty,
         pp_error,
         pp_list,
         pp_list_summary,
@@ -39,12 +42,16 @@ class Pretty a where
         pp_brief   :: a -> Doc
         pp_brief   = pp_level 5
 
+pp_empty = empty :: Doc
+
 mystyle = style { mode = PageMode
                 , lineLength = 80
                 , ribbonsPerLine = 1.5
                 }
 
 myrender = renderStyle mystyle
+
+render_left = renderStyle mystyle { mode = LeftMode }
 
 -- |Report a summary of the data
 report :: Pretty a => String -> a -> String
@@ -125,6 +132,14 @@ pp_data constr body = text constr <+> braces (cat $ punctuate comma $ map field 
                 field (name, doc) = text name <+> text "=" <+> doc
 
 pp_timestamp = integer
+
+vcat_level :: Hyper Integer -> [Doc] -> Doc
+vcat_level n xs
+        | len < n    = vcat xs
+        | otherwise  = vcat . add_ellipsis . hyper_take n $ xs
+        where
+                add_ellipsis ps = ps ++ [text "..."]
+                len = fromIntegral $ length xs
 
 
 

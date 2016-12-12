@@ -2,6 +2,10 @@ library(ggplot2)
 library(cluster)
 library(shiny)
 
+is.string <- function(s) {
+    is.character(s) &&  !is.na(s)  && length(s) > 0
+}
+
 # Generic file data frame reader
 mmap.read <- function(description, nrows=-1) {
     con    <- file(description, "r")
@@ -185,21 +189,38 @@ mmap.plot <- function(file, B=100) {
     return(ret)
 }
 
-find.trace.pid <- function(g, pid) {
-    head(g$trace$trace[ g$trace$pid == pid ], n=1)
+find.trace.clone.process <- function(g, t, pid) {
+    xs <- g$trace$trace[g$trace$child_pid == pid & g$trace$t <= t &
+                            g$trace$success == 1 & g$trace$syscall == 2]
+    if (length(xs)==0) {
+        return(NULL)
+    }
+    return(tail(xs,n=1))
+}
+
+find.trace.exec <- function(g, t, pid) {
+    xs <- g$trace$trace[g$trace$pid == pid & g$trace$t <= t & g$trace$success == 1 & g$trace$syscall==1]
+    if (length(xs)==0) {
+        return(NULL)
+    }
+    return(tail(xs,n=1))
 }
 
 find.trace_id <- function(mmap, t, p) {
     cat("t=",t,"\np=",p,"\n")
     matched <- mmap[mmap$t <= t & t < mmap$t + mmap$dt & mmap$from <= p & p < mmap$to , ]
-    print(matched)
     return(matched$trace_id[1])
 }
 
 find.trace <- function(g, t, p) {
     trace.id <- find.trace_id(g$mmap,t,p)
-    ts       <- g$trace$trace[ g$trace$trace_id == trace.id ]
-    return(ts[1])
+
+    xs <- g$trace$trace[ g$trace$trace_id == trace.id ]
+
+    if (length(xs)==0) {
+        return(NULL)
+    }
+    return(tail(xs,n=1))
 }
 
 # ggplot object with trace info
@@ -260,6 +281,7 @@ shiny.render.plot <- function(g) {
     })
 }
 
+
 shiny.render.text <- function(g,input) {
     force(g)
     force(input)
@@ -268,18 +290,29 @@ shiny.render.text <- function(g,input) {
 
         t     <- input$plot_click$x
         page  <- input$plot_click$y
-        p     <- mmap.sprint.page(page)
-        trace <- find.trace(g,t,page)
 
-        if (is.na(trace)) {
-            trace <- find.trace.pid(g, g$pid)
+        if (is.numeric(t) && is.numeric(page)) {
+            p     <- mmap.sprint.page(page)
+            trace <- find.trace(g,t,page)
+
+            if (!is.string(trace)) {
+                trace <- find.trace.exec(g, t, g$pid)
+            }
+
+            if (!is.string(trace)) {
+                trace <- find.trace.clone.process(g, t, g$pid)
+            }
+
+            if (!is.string(trace)) {
+                trace <- "no trace"
+            }
+
+            ## Print to stdout. Useful for scripting or in multi-monitor setup
+            cat("pid=",g$pid, "\nt=",t , "\np=", p, "\ntrace:\n", trace,"\n")
+
+            ## Paste into the html
+            paste0("t=",t , "\np=", p, "\ntrace:", trace)
         }
-
-        ## Print to stdout. Useful for scripting or in multi-monitor setup
-        cat("pid=",g$pid, "\nt=",t , "\np=", p, "\ntrace:\n", trace,"\n")
-
-        ## Paste into the html
-        paste0("t=",t , "\np=", p, "\ntrace:", trace)
     })
 }
 
