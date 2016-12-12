@@ -91,7 +91,7 @@ class (Num a, Eq a, Ord a) => HyperNum a where
 
 data Hyper a = HyperUnsafe
                { hyper_inv_dx_unsafe :: [a] -- ^ Infinites
-               , hyper_std_unsafe    :: !a   -- ^ Standard part
+               , hyper_std_unsafe    :: !a  -- ^ Standard part
                , hyper_dx_unsafe     :: [a] -- ^ Infinitesimals
                }
               deriving(Eq,Show, Generic, NFData)
@@ -106,6 +106,7 @@ instance Functor Hyper where
 
 instance (Eq a, Ord a, Num a) => Ord (Hyper a) where
         compare = hyper_compare
+        -- This is inefficient
         --h <= h' = hyper_leading_coefficient (h - h') <= 0
 
 -- a bit of optimization

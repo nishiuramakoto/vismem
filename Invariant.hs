@@ -32,11 +32,10 @@ warn desc x = unsafePerformIO $ do
 #ifndef NDEBUG
 
 with_invariant :: String -> Bool -> (a -> Bool) -> a -> a
-with_invariant desc pre post ret = ret'
-        where
-                ret' =  assert' (":precondition:"  ++ desc) (const pre) $
-                        assert' (":postcondition:" ++ desc) post        $
-                        ret
+with_invariant desc pre post ret =
+        assert' (":postcondition:" ++ desc) post        $
+        assert' (":precondition:"  ++ desc) (const pre) $
+        ret
 
 #else
 
