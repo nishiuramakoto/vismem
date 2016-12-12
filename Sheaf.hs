@@ -278,7 +278,7 @@ a constant presheaf ΔS, and also denoted ΔS when no confusion would arise.
 Δ:Sets <--> Sh(C,K):Γ
 
 where Γ is the natural transformation Hom(Δ1,-), called the global
-section functor. (Note that the presheaf Δ1 is already a sheaf.)
+section functor.
 
 The constant sheaves are actually our main data structure, so we shall calculate them explicitly.
 Intuitively, it should be obvious, it's a sheaf of 'locally constant' functions discussed below.
