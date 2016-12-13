@@ -3,6 +3,7 @@ module Invariant(
         trace,
         assert',
         warn,
+        warn_if,
         with_invariant
         )
        where
@@ -22,11 +23,15 @@ test' :: String -> (a -> Bool) -> a -> Bool
 test' desc p x | p x = True
                | otherwise = error $ "test failed:" ++ desc
 
--- Never rely on the evaluation order..
 warn :: String -> a -> a
 warn desc x = unsafePerformIO $ do
         putStrLn $ "warning:" ++ desc
         return x
+
+warn_if :: (a -> Bool) -> String -> a -> a
+warn_if p desc x
+        | p x       = warn desc x
+        | otherwise = x
 
 
 #ifndef NDEBUG

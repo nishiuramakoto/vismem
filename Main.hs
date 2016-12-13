@@ -814,6 +814,9 @@ data ProcessTreeState = PTState
 
 type PTState = ProcessTreeState
 
+pt_area :: PTState -> Hyper Integer
+pt_area pt = Map.foldl' (+) 0 $ Map.map ps_area $ pt_ps_map pt
+
 pt_num_processes :: PTState -> Int
 pt_num_processes pt = Map.size $ pt_ps_map pt
 
@@ -973,6 +976,23 @@ region :: Integer -> Integer -> Region
 region p len = align_page $ gen (h(p)-dx, h(p) + h(len) -dx)
         where h = fromIntegral
 
+region_grow :: Region -> Region
+region_grow g = let (x,y) = from_gen g
+                    x' = x - dx^(1 - hyper_order x)
+                    y' = y + dx^(1 - hyper_order y)
+                in gen (x',y')
+
+region_grow_upper :: Region -> Region
+region_grow_upper g = let (x,y) = from_gen g
+                          y' = y + dx^(1 - hyper_order y)
+                in gen (x,y')
+
+region_grow_lower :: Region -> Region
+region_grow_lower g = let (x,y) = from_gen g
+                          x' = x - dx^(1 - hyper_order x)
+                      in gen (x',y)
+
+
 align_page :: Region -> Region
 align_page i = let (x,y)         = from_gen i
                    align_floor x = (x `shiftR` page_shift) `shiftL` page_shift
@@ -984,6 +1004,13 @@ type MmapFlags = (String, String, String, String)
 
 ps_act_vm :: (VM -> VM)  -> PState -> PState
 ps_act_vm f s = s { ps_vm = f (ps_vm s) }
+
+ps_act_vm_maybe :: (VM -> Maybe VM)  -> PState -> Maybe PState
+ps_act_vm_maybe f s =
+        case f (ps_vm s) of
+        Just vm' -> Just $ s { ps_vm = vm' }
+        Nothing  -> Nothing
+
 
 ps_area :: PState -> Hyper Integer
 ps_area = section_area . ps_vm
@@ -998,16 +1025,9 @@ vma_valid g = let x = gen_lower_bound g
                       hyper_std y `rem` 2^12 == 0
 
 ps_insert_vma :: Region ->  MmapFlags -> UniqueStrace -> PState -> PState
-ps_insert_vma g (prot,flags,fd,offset) trace s =
-        with_invariant (report "ps_insert_vma" (g, g /\ s, ps_area s, ps_area t))
-        precondition
-        postcondition
-        t
+ps_insert_vma g (prot,flags,fd,offset) trace s = ps_update_vma g update s
         where
-                precondition    = vma_valid g
-                postcondition t = section_area (g/\s) == gen_area g || ps_area t > ps_area s
-
-                t = ps_act_vm (fromJust . section_glue_at g vmainfo) $ ps_delete_vma g trace s
+                update = const vmainfo
                 vmainfo = vm_info_default
                           { vma_prot  = prot
                           , vma_flags = flags
@@ -1015,8 +1035,6 @@ ps_insert_vma g (prot,flags,fd,offset) trace s =
                           , vma_offset = offset
                           , vma_trace  = Just trace
                           }
-
-                g /\ s = section_lift2 const (ps_vm s) (section_singleton (g, ()))
 
 
 -- | 'Region' given may not intersect the section (in which case it's just a no-op)
@@ -1055,30 +1073,37 @@ vm_diff x y =
 
 vm_area = section_area
 
+nth n = head . drop n
 -- | Generic vma updater
 --   vma info for unmapped region defaults to vm_info_default
 ps_update_vma :: Region -> (VMAInfo -> VMAInfo) -> PState -> PState
 ps_update_vma g update s =
-        with_invariant (report "ps_update_vma" (ps_area t, vm_area (ps_vm t /\ g'), ps_area s))
+        with_invariant (report "ps_update_vma" (ps_area t, vm_area (ps_vm t /\ g0), ps_area s))
         precondition
         postcondition
-        t
+        $ warn (printf "ns:nt=%d:%d" (nc s) (nc t)) t
         where
                 precondition    = vma_valid g && ps_valid s
-                postcondition t = vm_area t' == vm_area s' + vm_area (g'\\s')
+                postcondition t = vm_area t' == vm_area s' + vm_area (g0\\s')
                         where
                                 t' = ps_vm t :: VM
                                 s' = ps_vm s :: VM
 
-                g'   = section_singleton (g, update vm_info_default)
+                t  = ps_act_vm vm_update s :: PState
 
-                t  = let f vm = (g' \\ vm) \/ (vm /\ g') \/ (vm \\ g')
-                     in  ps_act_vm f s
+                g0 = section_singleton (g, update vm_info_default)
+                vm_update :: VM -> VM
+                vm_update vm = let x   = (g0 \\ vm) \/ (g0 /\ vm) \/ (vm \\ g0)
+                                   xl  = section_closure $ section_restrict_at (region_grow g) x
+                               in
+                                       x \/ xl
 
-                x \\ y =  x `vm_diff` y
-                x \/ y =  fromJust $ section_glue x y
-                x /\ y =  section_lift2 (\x y -> update x) x y
+                x \/ y = fromJust $ section_glue x y
+                x /\ y = section_lift2 (\x y -> update y) x y
+                x \\ y = x `vm_diff` y
 
+                nc s = length $ section_connected_components $ ps_vm s
+                ng s = length $ section_to_asc_list $ ps_vm s
 
 -- |See mprotect(2)
 ps_protect_vma :: Region -> String -> UniqueStrace -> PState -> PState
@@ -1660,6 +1685,7 @@ dump strace_in frame_out trace_out = do
                 sample_size = 1000
                 label name m (n,x) = text $ printf "%s:%d/%d" name n m
                 finish xs = putStrLn $ printf "%d frames written" $ length xs
+                -- finish xs = render_line_to stderr $ pp $ pt_area $ last xs
                 --summarize = assert' "valid" (all pt_valid) . snapshot 1000
 
 

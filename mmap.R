@@ -35,17 +35,6 @@ mmap.sprint.page <- function(page) {
 }
 
 
-# Estimate the number of clusters.
-ncluster <- function(M, n=8, B=100) {
-    k <- dim(M)[1]
-    if (k <= n) {
-        return(k-1)
-    } else {
-        c   <- clusGap(M, kmeans, 8, B = B) # Doc says 500 is good
-        ret <- maxSE( c$Tab[,3] , c$Tab[,4], SE.factor=1)
-        return(ret)
-    }
-}
 
 iv.intersects <- function(i,j) {
     return (i[1] <= j[1] && j[1] <= i[2]) || (j[1] <= i[1] && i[1] <= j[2])
@@ -87,12 +76,34 @@ find.next <- function(t) {
     return(v[i+1])
 }
 
+
+# Estimate the number of clusters.
+ncluster <- function(M, n=8, B=100) {
+    k <- dim(M)[1]
+    n <- min(n,k-1)
+
+    if (n <= 1) {
+        return(1)
+    } else {
+        c   <- clusGap(M, kmeans, n, B = B) # Doc says 500 is good
+        ret <- maxSE( c$Tab[,3] , c$Tab[,4], SE.factor=1, method="globalmax")
+
+        if (ret==1) {
+            print(M)
+        }
+
+        return(ret)
+    }
+}
+
 # Add cluster numbers sorted according to the base address
 mmap.cluster <- function(mmap, B=100) {
     ivs <- disjoint.intervals(mmap)
     ps  <- matrix(sort(as.vector(ivs[,1])), ncol=1)
+    #ps  <- matrix(sort(as.vector(ivs)), ncol=1)
     nc  <- ncluster(ps, B=B)
     fit <- kmeans(ps, nc)
+
 
     # Representative values for each cluster
     representatives <- ps[match(1:nc, fit$cluster)]
@@ -157,11 +168,11 @@ myplot <- function(frame) {
     return(ret)
 }
 
-label.cluster <- function(pid, sizes) {
+label.cluster <- function(pid, sizesMB) {
     # Please don't mix non referential transparency and laziness!
     force(pid)
-    force(sizes)
-    l <- function(variable,value) sprintf("%dM", ceiling(sizes[value]/256))
+    force(sizesMB)
+    l <- function(variable,value) sprintf("%dM", ceiling(sizesMB[value]))
     return(l)
 }
 
@@ -175,15 +186,23 @@ mmap.plot <- function(file, B=100) {
     for (pid in pids) {
         curmap    <- mmap[mmap$pid == pid,]
         clus      <- mmap.cluster(curmap, B=B)
-        sizes     <- mmap.cluster.size(clus)
+        sizesMB   <- ceiling(mmap.cluster.size(clus) /2^(20-12))
+        areaMB    <- sum(sizesMB)
 
-        print(sprintf("cluster_sizes(pid=%d):",pid))
-        cat(sizes/265)
+        stopifnot(all(mmap$from < mmap$to))
 
-        labeller  <- label.cluster(pid,sizes)
+        if (areaMB > 10000) {
+            #print(curmap)
+            #print(clus)
+        }
+
+        cat(sprintf("cluster_sizes_MB(pid=%d)=",pid),"\n")
+        cat(sizesMB,"\n")
+
+        labeller  <- label.cluster(pid,sizesMB)
         g         <- myplot.cluster(clus, labeller = labeller)
 
-        ret[[i]] <- list(pid=pid, plot=g, mmap = clus)
+        ret[[i]] <- list(pid=pid, plot=g, mmap = clus, areaMB = areaMB)
         i <- i+1
     }
     return(ret)
@@ -223,6 +242,17 @@ find.trace <- function(g, t, p) {
     return(tail(xs,n=1))
 }
 
+
+human.bytes <- function(mb) {
+    if (mb < 2^10) {
+        sprintf("%.1fMB",mb)
+    } else if (mb < 2^20) {
+        sprintf("%.1fGB",mb/2^10)
+    } else if (mb < 2^30) {
+        sprintf("%.1fTB",mb/2^20)
+    }
+}
+
 # ggplot object with trace info
 mmap.plot.trace <- function(matrix.file, trace.file, B=100) {
     gs    <- mmap.plot(matrix.file, B=B)
@@ -230,17 +260,19 @@ mmap.plot.trace <- function(matrix.file, trace.file, B=100) {
 
     for (i in 1:length(gs)) {
         gs[[i]]$trace <- trace
-        gs[[i]]$plot.panel  <- sprintf("pid_%s", gs[[i]]$pid)
+        gs[[i]]$plot.panel  <- sprintf("%d_%dMB", gs[[i]]$pid, ceiling(gs[[i]]$areaMB))
         gs[[i]]$trace.panel <- sprintf("trace_%s", gs[[i]]$pid)
     }
     return(gs)
 }
 
 test <- function () {
-    datafile  = "build/data-2016-12-08_09h55m38s/frame.data"
-    tracefile = "build/data-2016-12-08_09h55m38s/trace.data"
+    datafile = "build/data-2016-12-12_22h47m17s/frame.data"
+    tracefile = "build/data-2016-12-12_22h47m17s/trace.data"
     gs <- mmap.plot(datafile)
+
     print(gs[[1]]$plot)
+    gs
 }
 
 
@@ -275,9 +307,24 @@ shiny.ui.tabs <- function(gs) {
 shiny.render.plot <- function(g) {
     ## Please please don't mix impurity and laziness in your language..
     force(g)
-    print(g$pid)
     renderPlot({
-        g$plot
+        print(g$pid)
+
+        d <- dim(g$mmap)
+        if (is.na(d[1])) {
+            print("data not available")
+            print(dim(g$mmap))
+            print(head(g$mmap))
+            print(head(g$mmap))
+
+        } else if (d[1] > 10^6) {
+            print("data too big")
+            print(dim(g$mmap))
+            print(head(g$mmap))
+            print(head(g$mmap))
+        } else {
+            g$plot
+        }
     })
 }
 

@@ -619,15 +619,15 @@ spec_gen_unions = it "computes the union of two generators" $ do
         gen_unions (genA (1,2)) (genA (2-dx,3)) @=? [genA (1,3)]
 
 -- partial, dangerous
-gen_union  :: HyperNum a => Generator a -> Generator a -> Generator a
-gen_union  = induce2
-             from_gen
-             hyper_interval_union
-             (head . map gen)
+gen_union_unsafe  :: HyperNum a => Generator a -> Generator a -> Generator a
+gen_union_unsafe  = induce2
+                    from_gen
+                    hyper_interval_union
+                    (head . map gen)
 
 spec_gen_union = it "partially computes the union of two intersecting generators" $ do
-        gen_union (genA (1,2+dx)) (genA (2,3)) @=? genA (1,3)
-        gen_union (genA (1,2))    (genA (0,1+dx)) @=? genA (0,2)
+        gen_union_unsafe (genA (1,2+dx)) (genA (2,3)) @=? genA (1,3)
+        gen_union_unsafe (genA (1,2))    (genA (0,1+dx)) @=? genA (0,2)
 
 -- | The fibered product x∩y over x‌/y/x∪y (all the same on our site)
 gen_intersection :: HyperNum a => Generator a -> Generator a -> Generator a
@@ -915,7 +915,7 @@ section_canonicalize s =
 
                 Nothing    \/ _ = Nothing
                 Just (s,x) \/ (t,y)
-                        | x == y    = Just (gen_union s t, x)
+                        | x == y    = Just (gen_union_unsafe s t, x)
                         | otherwise = Nothing
 
 spec_section_canonicalize = it "transforms a section to the canonical form" $ do
@@ -983,7 +983,7 @@ section_to_asc_components_list s =
                 classify (g, (gs:gss)) (h,y)
                         | gen_intersects g h = (g \/ h, ((h,y):gs):gss)
                         | otherwise          = (h     , [(h,y)]:gs:gss)
-                (\/) = gen_union
+                (\/) = gen_union_unsafe
 
 
 spec_section_to_asc_components_list =
@@ -1017,7 +1017,7 @@ section_split_components_at g s =
                                                section_valid other
 
                 (l, o)   = section_split_at_unsafe g s
-                ldom     = foldl1' gen_union $ g:section_domain_asc l  -- @tbd this wont' generalize
+                ldom     = foldl1' gen_union_unsafe $ g:section_domain_asc l  -- @tbd this wont' generalize
                 (l', o') = section_split_components_at ldom o        -- recurse
 
                 local | section_null l = l
@@ -1306,7 +1306,7 @@ gen_glue (g,x) (h, y)
         |  x == y           = Just $ section_from_list_unsafe [(g\/h,x)]
         |  x /= y           = Nothing
 
-        where (\/) = gen_union
+        where (\/) = gen_union_unsafe
 
 spec_gen_glue =
         it "glues two generating sections together" $ do
@@ -1395,6 +1395,34 @@ spec_section_glue =
                 section_glue s1 s3 @=? Nothing
 
 
+section_closure :: (HyperNum a, Eq s)
+                   => Section a s -> Section a s
+section_closure s = section_from_list_unsafe $ foldr (<>) [] $ section_to_asc_list s
+        where
+                g <> []     = [g]
+                g <> (h:gs) = gen_closure g h ++ gs
+
+
+spec_section_closure =
+        it "computes the closure of a section" $ do
+                let s = section_from_list_unsafe
+                let c = section_closure . section_from_list_unsafe
+                c [(genA (0,1),0), (genA (1,2),0)] @=? s [(genA (0,2),0)]
+                c [(genA (0,1),0), (genA (1,2),1)] @=? s [(genA (0,1),0),(genA (1,2),1)]
+
+gen_closure :: (HyperNum a, Eq s)
+               => (Generator a, s) -> (Generator a, s) -> [(Generator a,s)]
+gen_closure (g,x) (h,y)
+        | x == y =
+          let (a,b) = from_gen g
+              (c,d) = from_gen h
+          in
+                if (a == d || b == c)
+                then [(gen (min a c, max b d),x)]
+                else map (\g -> (g,x)) $ gen_unions g h
+        | otherwise = [(g,x),(h,y)]
+
+
 -- *** Geometric Morphisms
 
 -- **** Continuous group actions on the base space
@@ -1419,6 +1447,7 @@ spec_section_translate =
                 let s1 = s [(genA(0,1),0),(genA(2,3),1)]
 
                 s1 *> 10 @=? s [(genA(10,11),0),(genA(12,13),1)]
+
 
 -- *** Geometry of the sections
 

@@ -3,7 +3,7 @@
 {- |
 ************************************************************************
 *                                                                      *
-*        A ring of hyperreals Q[dx,1/dx] and their intervals
+*        A Laurent ring of hyperreals Q[dx,1/dx] and their intervals
 *                                                                      *
 ************************************************************************
 
@@ -46,6 +46,7 @@ module Hyper (
         hyper_inf,
         hyper_from_std,
         hyper_degree,
+        hyper_order,
         hyper_floor,
         hyper_ceiling,
 
@@ -64,7 +65,9 @@ module Hyper (
         hyper_take,
 
         -- * Specifications
-        spec_hyper_compare
+        spec_hyper_compare,
+        spec_hyper_degree,
+        spec_hyper_order
         )
        where
 
@@ -171,15 +174,42 @@ hyper_from_std x = HyperUnsafe [] x []
 
 
 hyper_degree :: (Eq a, Num a) => Hyper a -> Integer
-hyper_degree (HyperUnsafe os x es) =
-        let os_rev = dropWhile (==0) $ reverse os
-            es_rev = dropWhile (==0) $ reverse es
+hyper_degree (HyperUnsafe infs x dxs) =
+        let inf_deg = length $ dropWhile (==0) $ reverse infs
+            dx_deg  | all (==0) dxs = 0
+                    | otherwise     = 1 + (length $ takeWhile (==0) $ dxs)
+
+            deg | inf_deg /= 0 = inf_deg
+                | x /= 0       = 0
+                | x == 0       = -dx_deg
         in
-                case (null os_rev, x == 0, null es_rev) of
-                (False, _, _)         -> fromIntegral $ length os_rev
-                (True , False, _)     -> 0
-                (True , True , False) -> fromIntegral $ length es_rev
-                (True , True , True)  -> 0
+                fromIntegral deg
+
+spec_hyper_degree =
+        it "defines the degree of a Laurent polynomial" $ do
+                let deg = hyper_degree
+                deg (inf^2+inf+1+dx) @=? 2
+                deg inf @=? 1
+                deg 0   @=? 0 -- wrong, but..
+                deg (2+dx)  @=? 0
+                deg dx  @=? (-1)
+                deg (dx^2)  @=? (-2)
+
+
+hyper_order :: (Eq a, Num a) => Hyper a -> Integer
+hyper_order (HyperUnsafe infs x dxs) = - hyper_degree (HyperUnsafe dxs x infs)
+
+
+spec_hyper_order =
+        it "defines the order of a Laurent polynomial" $ do
+                let ord = hyper_order
+                ord (inf^2+inf+1+dx) @=? (-1)
+                ord inf @=? 1
+                ord 0   @=? 0 -- wrong, but..
+                ord (2+dx)  @=? (-1)
+                ord dx  @=? (-1)
+                ord (dx^2)  @=? (-2)
+
 
 -- | Compute the maximum hyper integer y s.t. y <= x @tbd generalize
 hyper_floor :: Hyper Integer  -> Hyper Integer
